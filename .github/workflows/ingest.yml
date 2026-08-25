@@ -2,13 +2,13 @@ name: ingest
 
 on:
   schedule:
-    - cron: "0 22 * * *"      # 05:00 เวลาไทย ทุกวัน
-  workflow_dispatch:
+    - cron: "0 22 * * *"      # 05:00 เวลาไทย ทุกวัน (UTC 22:00)
+  workflow_dispatch:            # กดรันเองได้จากแท็บ Actions
 
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,45 +16,15 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Run all sources + health check
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          TARGET_TIER: ${{ vars.TARGET_TIER || '1' }}
-          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
-          LINE_NOTIFY_TO: ${{ secrets.LINE_NOTIFY_TO }}
-        run: python src/run_all.py
 
-  health-midday:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
-      - run: pip install -r requirements.txt
-      - name: Health check only
+      - name: Ingest ทุกแหล่ง (run_all)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
           LINE_NOTIFY_TO: ${{ secrets.LINE_NOTIFY_TO }}
-        run: python src/run_all.py --health-only
----
-name: model-ops
+        run: python src/run_all.py --tier ${{ vars.TARGET_TIER || '1' }} --max-pages 30
 
-on:
-  schedule:
-    - cron: "0 1 1 * *"       # 08:00 เวลาไทย ทุกวันที่ 1
-  workflow_dispatch:
-
-jobs:
-  monthly:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
-      - run: pip install -r requirements.txt
-      - name: Refresh + evaluate model
+      - name: Enrich (geocode + infra + grade)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python src/model_ops.py monthly
+        run: python src/enrich.py all --detail-limit 150
