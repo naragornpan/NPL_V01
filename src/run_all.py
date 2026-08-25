@@ -79,7 +79,12 @@ def run_one(source: str, dry_run: bool, tier: int | None = None,
     if max_pages:
         cmd += ["--max-pages", str(max_pages)]
     log.info("เริ่ม %s", source)
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        # แหล่งเดียว timeout ต้องไม่ทำให้ทั้ง run พัง — ข้ามไปแหล่งถัดไป
+        log.error("%s เกินเวลา 1800s — ข้ามไปแหล่งถัดไป (ไม่ล้มทั้ง run)", source)
+        return source, 124
     if proc.returncode != 0:
         log.error("%s ล้มเหลว: %s", source, (proc.stderr or "")[-500:])
     return source, proc.returncode
