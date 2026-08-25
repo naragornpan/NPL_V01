@@ -1,0 +1,25 @@
+# Render.com Blueprint — deploy แปลงดี (web-npa) แบบ free tier เพื่อรับ feedback
+# วิธีใช้: push โค้ดขึ้น GitHub → Render → New → Blueprint → เลือก repo นี้
+# แล้วกรอกค่า secret (DATABASE_URL, ADMIN_TOKEN) ในหน้า Render ตอน deploy
+services:
+  - type: web
+    name: plaengdee
+    runtime: python
+    plan: free
+    region: singapore              # ใกล้ไทยสุดใน free tier
+    buildCommand: pip install -r requirements.txt
+    startCommand: python src/web.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: HOST
+        value: "0.0.0.0"           # ต้อง bind 0.0.0.0 ให้เข้าจากภายนอกได้
+      - key: PUBLIC_MODE
+        value: "1"                 # ซ่อนรูป/ข้อมูลที่ยังไม่มีสิทธิ์เผยแพร่
+      - key: DATABASE_URL
+        sync: false                # กรอกเองในหน้า Render (secret) — connection ของ Supabase
+      - key: ADMIN_TOKEN
+        sync: false                # กรอกเองในหน้า Render (secret) — ตั้งค่าเดายาก อย่าใช้ narak
+    autoDeploy: true               # push แล้ว deploy อัตโนมัติ
+# หมายเหตุ: free tier จะ "หลับ" เมื่อไม่มีคนเข้า ~15 นาที
+#   คำขอแรกหลังหลับจะช้า ~30-50 วิ (cold start) — ปกติสำหรับช่วง beta

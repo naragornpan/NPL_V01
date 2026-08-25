@@ -1,0 +1,6 @@
+.env
+data/probe/
+__pycache__/
+*.pyc
+.venv/
+logs/

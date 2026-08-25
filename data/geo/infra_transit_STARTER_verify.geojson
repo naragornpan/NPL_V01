@@ -1,0 +1,16 @@
+{
+  "type": "FeatureCollection",
+  "_readme": "STARTER เท่านั้น — พิกัดสถานี interchange หลักกลางกรุง (โดยประมาณ) ใช้ทดสอบ pipeline ให้เห็นผลทันที. ต้อง 'ตรวจสอบพิกัดกับแหล่งทางการ (รฟม./BTS/SRT)' และ 'ขยายให้ครบทุกสถานี' ก่อนใช้ตัดสินใจจริง. verified_by จะถูกปล่อยว่างเสมอ.",
+  "features": [
+    {"type":"Feature","properties":{"name":"สยาม (Siam) BTS","line":"สุขุมวิท/สีลม","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5341,13.7457]}},
+    {"type":"Feature","properties":{"name":"อโศก-สุขุมวิท (Asok/Sukhumvit)","line":"BTS สุขุมวิท / MRT สีน้ำเงิน","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5601,13.7373]}},
+    {"type":"Feature","properties":{"name":"หมอชิต-สวนจตุจักร (Mo Chit/Chatuchak)","line":"BTS สุขุมวิท / MRT สีน้ำเงิน","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5537,13.8025]}},
+    {"type":"Feature","properties":{"name":"ศาลาแดง-สีลม (Sala Daeng/Silom)","line":"BTS สีลม / MRT สีน้ำเงิน","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5340,13.7285]}},
+    {"type":"Feature","properties":{"name":"พญาไท (Phaya Thai)","line":"BTS สุขุมวิท / ARL","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5339,13.7566]}},
+    {"type":"Feature","properties":{"name":"อนุสาวรีย์ชัยสมรภูมิ (Victory Monument)","line":"BTS สุขุมวิท","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5374,13.7650]}},
+    {"type":"Feature","properties":{"name":"สถานีกลางกรุงเทพอภิวัฒน์-บางซื่อ","line":"SRT/MRT hub","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5390,13.8020]}},
+    {"type":"Feature","properties":{"name":"พร้อมพงษ์ (Phrom Phong)","line":"BTS สุขุมวิท","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5698,13.7305]}},
+    {"type":"Feature","properties":{"name":"อ่อนนุช (On Nut)","line":"BTS สุขุมวิท","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.6013,13.7057]}},
+    {"type":"Feature","properties":{"name":"หัวลำโพง (Hua Lamphong)","line":"MRT สีน้ำเงิน","certainty_level":5,"_verify":"ตรวจพิกัดก่อนใช้"},"geometry":{"type":"Point","coordinates":[100.5170,13.7373]}}
+  ]
+}
