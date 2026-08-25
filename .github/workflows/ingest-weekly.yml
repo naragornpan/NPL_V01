@@ -1,0 +1,63 @@
+name: ingest-weekly
+
+# ดึงข้อมูลทั้งประเทศ (tier 3) รายสัปดาห์ — รันทุกแหล่งพร้อมกัน (matrix)
+# เวลารวม = แหล่งที่ช้าสุด ไม่ใช่ผลรวม; แต่ละแหล่งมีเวลา 3 ชม.ของตัวเอง
+on:
+  schedule:
+    - cron: "0 20 * * 6"      # อาทิตย์ 03:00 เวลาไทย (เสาร์ 20:00 UTC)
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false          # แหล่งหนึ่งพังไม่ยกเลิกแหล่งอื่น
+      matrix:
+        source: [bam, ghb, ktb, led_auction, sam, ttb]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Ingest ${{ matrix.source }} (tier 3 ทั้งประเทศ)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/run.py ${{ matrix.source }} --tier 3 --max-pages 40
+
+  enrich:
+    needs: ingest
+    if: always()                # ให้ enrich รันแม้บางแหล่งพลาด
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Enrich (geocode + infra + grade)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/enrich.py all --detail-limit 400
+
+  health:
+    needs: enrich
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Health report + LINE alert
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_NOTIFY_TO: ${{ secrets.LINE_NOTIFY_TO }}
+        run: python src/run_all.py --health-only --alert-always
