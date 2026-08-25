@@ -15,7 +15,9 @@ services:
       - key: HOST
         value: "0.0.0.0"           # ต้อง bind 0.0.0.0 ให้เข้าจากภายนอกได้
       - key: PUBLIC_MODE
-        value: "1"                 # ซ่อนรูป/ข้อมูลที่ยังไม่มีสิทธิ์เผยแพร่
+        value: "0"                 # 0 = โชว์รูปต้นทาง (สำหรับ beta ให้เห็นรูปจริง)
+        #   ตั้ง "1" เมื่อพร้อม launch จริง = ซ่อนรูปที่ยังไม่มีสิทธิ์เผยแพร่
+        #   (ก่อนตั้ง 1 ต้องแคช/มาร์ครูปเป็น usage_scope='publishable' ก่อน ไม่งั้นจะเป็น placeholder ล้วน)
       - key: DATABASE_URL
         sync: false                # กรอกเองในหน้า Render (secret) — connection ของ Supabase
       - key: ADMIN_TOKEN

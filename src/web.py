@@ -38,9 +38,73 @@ NO_DB = not os.environ.get("DATABASE_URL")
 DEMO_MODE = os.environ.get("DEMO_MODE") == "1" or NO_DB
 PUBLIC_MODE = os.environ.get("PUBLIC_MODE") == "1"
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+# รหัสผ่านสำหรับ login หลังบ้าน (ถ้าไม่ตั้ง ใช้ ADMIN_TOKEN แทน เพื่อความเข้ากันได้)
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "") or ADMIN_TOKEN
+# กุญแจเซ็น cookie — ตั้ง SECRET_KEY บน production; ถ้าไม่ตั้ง อนุมานจาก token
+SECRET_KEY = os.environ.get("SECRET_KEY") or ADMIN_TOKEN or "dev-insecure-key"
+# URL ฐานสำหรับลิงก์ absolute (OG/แชร์) — เช่น https://plaengdee.onrender.com
+BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
+SESSION_COOKIE = "npa_admin"
+SESSION_DAYS = 7
 
 log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
+
+
+# ---------------------------------------------------------------------
+# Auth หลังบ้าน — cookie เซ็นด้วย HMAC (ไม่พึ่ง lib เพิ่ม)
+# แทน token ใน URL (ซึ่งรั่วผ่าน log/referrer/ประวัติ)
+# ยังรับ ?token=ADMIN_TOKEN ได้อยู่ เพื่อความเข้ากันได้กับลิงก์เดิม
+# ---------------------------------------------------------------------
+def _sign(msg: str) -> str:
+    import hashlib
+    import hmac
+    return hmac.new(SECRET_KEY.encode(), msg.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def make_session_cookie() -> str:
+    import time
+    exp = str(int(time.time()) + SESSION_DAYS * 86400)
+    return f"{exp}.{_sign(exp)}"
+
+
+def _valid_cookie(value: str | None) -> bool:
+    import hmac
+    import time
+    if not value or "." not in value:
+        return False
+    exp, sig = value.split(".", 1)
+    if not hmac.compare_digest(sig, _sign(exp)):
+        return False
+    try:
+        return int(exp) > int(time.time())
+    except ValueError:
+        return False
+
+
+def admin_ok(request: "Request", token: str = "") -> bool:
+    """True ถ้าล็อกอินแล้ว (cookie) หรือส่ง token ถูก (เข้ากันได้กับลิงก์เดิม)"""
+    if _valid_cookie(request.cookies.get(SESSION_COOKIE)):
+        return True
+    return bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+
+
+def guard(request: "Request", token: str = ""):
+    """คืน RedirectResponse ไปหน้า login ถ้ายังไม่ได้สิทธิ์ admin, ไม่งั้นคืน None"""
+    if admin_ok(request, token):
+        return None
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/admin/login", status_code=303)
+
+
+def _abs_url(request: "Request", path_or_url: str | None) -> str | None:
+    """ทำให้เป็น URL แบบเต็ม (absolute) สำหรับ OG/แชร์ — data: ไม่เอา"""
+    if not path_or_url or path_or_url.startswith("data:"):
+        return None
+    if path_or_url.startswith(("http://", "https://")):
+        return path_or_url
+    base = BASE_URL or str(request.base_url).rstrip("/")
+    return base + (path_or_url if path_or_url.startswith("/") else "/" + path_or_url)
 
 
 @app.exception_handler(RuntimeError)
@@ -856,8 +920,20 @@ TEMPLATES = {
 "layout.html": """
 <!doctype html><html lang="th"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ title }} · แปลงดี</title>
+<title>{{ og_title or (title ~ ' · แปลงดี') }}</title>
 <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<!-- OG/Twitter — พรีวิวตอนแชร์ลิงก์ใน LINE/FB -->
+<meta property="og:type" content="{{ og_type or 'website' }}">
+<meta property="og:site_name" content="แปลงดี">
+<meta property="og:title" content="{{ og_title or title }}">
+<meta property="og:description" content="{{ og_desc or 'รวมทรัพย์ NPA/ขายทอดตลาดหลายแหล่งไว้ที่เดียว จัดเกรดคุณภาพ วิเคราะห์ทำเลและราคาให้เห็นชัด' }}">
+{% if og_url %}<meta property="og:url" content="{{ og_url }}">{% endif %}
+{% if og_image %}<meta property="og:image" content="{{ og_image }}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{ og_image }}">{% else %}
+<meta name="twitter:card" content="summary">{% endif %}
+<meta name="twitter:title" content="{{ og_title or title }}">
+<meta name="twitter:description" content="{{ og_desc or 'รวมทรัพย์ NPA/ขายทอดตลาด จัดเกรด วิเคราะห์ทำเล' }}">
 <!-- เก็บ Tailwind ไว้ในเครื่อง ไม่พึ่ง CDN ตอนรัน
      ถ้าพึ่ง CDN แล้วเน็ตช้าหรือ CDN ล่ม หน้าเว็บจะไม่มีสไตล์เลย
      ซึ่งเกิดขึ้นจริงตอนทดสอบ -->
@@ -970,6 +1046,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
       {% if is_admin %}
       <span class="w-px bg-slate-300 my-0.5 shrink-0" aria-hidden="true"></span>
+      <a href="/admin/add{{ tk }}" class="navlink whitespace-nowrap" style="color:var(--survey)">+ เพิ่มทรัพย์</a>
       <a href="/admin{{ tk }}" class="navlink whitespace-nowrap">สถิติ</a>
       <a href="/admin/monitor{{ tk }}" class="navlink whitespace-nowrap">ยอดดู</a>
       <a href="/admin/inquiries{{ tk }}" class="navlink whitespace-nowrap">คำขอติดต่อ</a>
@@ -977,6 +1054,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/admin/promoted{{ tk }}" class="navlink whitespace-nowrap">โปรโมท</a>
       <a href="/admin/settings{{ tk }}" class="navlink whitespace-nowrap">ตั้งค่า</a>
       <a href="/health{{ tk }}" class="navlink whitespace-nowrap">สุขภาพระบบ</a>
+      <a href="/admin/logout" class="navlink whitespace-nowrap text-slate-400">ออกจากระบบ</a>
       {% endif %}
     </nav>
     <span class="ml-auto flex items-center gap-1.5 shrink-0">
@@ -1465,7 +1543,8 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <input type="hidden" name="next" value="/p/{{ r.source_code }}/{{ r.external_ref }}?token={{ admin_token }}">
     <span class="text-slate-500">แอดมิน:</span>
     <button class="text-white rounded-lg px-3 py-1.5 text-xs font-medium" style="background:var(--seal)">📌 ดันโปรโมท</button>
-    <a href="/admin/promoted?token={{ admin_token }}" class="text-xs brandlink ml-auto">จัดการทั้งหมด →</a>
+    {% if r.source_code == 'manual' %}<a href="/admin/add?ref={{ r.external_ref }}&token={{ admin_token }}" class="text-xs brandlink">✏️ แก้ไข</a>{% endif %}
+    <a href="/admin/promoted?token={{ admin_token }}" class="text-xs brandlink ml-auto">โปรโมท →</a>
   </form>
   {% endif %}
   <div class="sheet p-4">
@@ -2545,6 +2624,99 @@ loadProps();
 </div>
 {% endblock %}
 """,
+
+"login.html": """
+{% extends "layout.html" %}{% block body %}
+<div class="max-w-sm mx-auto mt-10">
+  <div class="sheet p-6">
+    <h1 class="text-lg font-semibold">เข้าสู่ระบบหลังบ้าน</h1>
+    <p class="text-sm text-slate-500 mt-1">สำหรับผู้ดูแลระบบเท่านั้น</p>
+    {% if error %}<div class="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{{ error }}</div>{% endif %}
+    <form method="post" action="/admin/login" class="mt-4 space-y-3">
+      <input type="hidden" name="next" value="{{ next or '/admin' }}">
+      <input type="text" name="website" class="hidden" tabindex="-1" autocomplete="off">
+      <label class="text-sm block">รหัสผ่าน
+        <input name="password" type="password" required autofocus
+          class="mt-1 w-full border rounded-lg px-3 py-2">
+      </label>
+      <button class="w-full text-white rounded-lg px-4 py-2.5 text-sm font-medium"
+        style="background:var(--ink)">เข้าสู่ระบบ</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+""",
+
+"add_property.html": """
+{% extends "layout.html" %}{% block body %}
+<div class="max-w-3xl mx-auto">
+  <div class="flex items-center justify-between mb-3">
+    <h1 class="text-lg font-semibold">{% if edit %}แก้ไขทรัพย์{% else %}เพิ่มทรัพย์ใหม่{% endif %}</h1>
+    <a href="/admin{{ '?token=' ~ admin_token if admin_token else '' }}" class="text-sm brandlink">← หลังบ้าน</a>
+  </div>
+  {% if saved %}<div class="mb-3 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">บันทึกแล้ว</div>{% endif %}
+
+  <form method="post" action="/admin/add" class="sheet p-5 grid gap-4 sm:grid-cols-2">
+    <input type="hidden" name="token" value="{{ admin_token }}">
+    <input type="hidden" name="external_ref" value="{{ f.external_ref or '' }}">
+
+    <label class="text-sm sm:col-span-2">หัวข้อ/ชื่อทรัพย์ <span class="text-red-500">*</span>
+      <input name="title" required value="{{ f.title or '' }}"
+        placeholder="เช่น บ้านเดี่ยว 2 ชั้น หมู่บ้าน..." class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <label class="text-sm">ประเภท <span class="text-red-500">*</span>
+      <select name="property_type" required class="mt-1 w-full border rounded-lg px-3 py-2">
+        {% for k,v in type_labels.items() %}<option value="{{ k }}" {% if k==f.property_type %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select></label>
+    <label class="text-sm">ชนิดเอกสารสิทธิ์
+      <input name="title_deed_type" value="{{ f.title_deed_type or '' }}" placeholder="โฉนด / นส.3ก / อช.2" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <label class="text-sm">ราคาเปิด/ราคาขาย (บาท) <span class="text-red-500">*</span>
+      <input name="opening_price" type="number" required value="{{ f.opening_price or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    <label class="text-sm">ราคาประเมิน (บาท)
+      <input name="appraised_price" type="number" value="{{ f.appraised_price or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <label class="text-sm">จังหวัด <span class="text-red-500">*</span>
+      <input name="province" required value="{{ f.province or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    <label class="text-sm">อำเภอ/เขต
+      <input name="district" value="{{ f.district or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    <label class="text-sm">ตำบล/แขวง
+      <input name="subdistrict" value="{{ f.subdistrict or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    <label class="text-sm">ที่อยู่ (ไม่ต้องใส่บ้านเลขที่)
+      <input name="address_raw" value="{{ f.address_raw or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <label class="text-sm">เนื้อที่ดิน (ตร.ว.)
+      <input name="land_area_sqwa" type="number" step="0.1" value="{{ f.land_area_sqwa or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    <label class="text-sm">พื้นที่ใช้สอย (ตร.ม.)
+      <input name="usable_area_sqm" type="number" step="0.1" value="{{ f.usable_area_sqm or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <div class="grid grid-cols-3 gap-3 sm:col-span-2">
+      <label class="text-sm">นอน<input name="bedrooms" type="number" value="{{ f.bedrooms or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+      <label class="text-sm">น้ำ<input name="bathrooms" type="number" value="{{ f.bathrooms or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+      <label class="text-sm">จอดรถ<input name="parking" type="number" value="{{ f.parking or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    </div>
+
+    <label class="text-sm">พิกัด lat (เช่น 13.7563)
+      <input name="lat" value="{{ f.lat or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+    <label class="text-sm">พิกัด lng (เช่น 100.5018)
+      <input name="lng" value="{{ f.lng or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <label class="text-sm sm:col-span-2">ลิงก์รูป (URL ละบรรทัด — บรรทัดแรก = รูปหลัก)
+      <textarea name="image_urls" rows="3" placeholder="https://...jpg&#10;https://...jpg"
+        class="mt-1 w-full border rounded-lg px-3 py-2">{{ f.image_urls or '' }}</textarea>
+      <span class="text-xs text-slate-400">ใช้รูปที่มีสิทธิ์เผยแพร่ (ถ่ายเอง/ได้รับอนุญาต) — จะถูกทำเครื่องหมายว่าเผยแพร่ได้</span></label>
+
+    <label class="text-sm sm:col-span-2">หมายเหตุผู้อยู่อาศัย/สภาพ
+      <input name="occupancy_note" value="{{ f.occupancy_note or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+
+    <div class="sm:col-span-2 flex items-center gap-3">
+      <button class="text-white rounded-lg px-5 py-2.5 text-sm font-medium" style="background:var(--ink)">{% if edit %}บันทึกการแก้ไข{% else %}เพิ่มทรัพย์{% endif %}</button>
+      <span class="text-xs text-slate-400">หลังบันทึก รัน <code class="bg-slate-100 px-1 rounded">python src\\enrich.py grade</code> เพื่อให้ระบบจัดเกรด (ถ้ายังไม่ขึ้นเกรด)</span>
+    </div>
+  </form>
+</div>
+{% endblock %}
+""",
 }
 
 env = Environment(loader=DictLoader(TEMPLATES), autoescape=True)
@@ -2564,7 +2736,7 @@ def base(**kw) -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(province: str | None = Query(None), district: str | None = Query(None),
+def index(request: Request, province: str | None = Query(None), district: str | None = Query(None),
           ptype: str | None = Query(None),
           max_price: str = Query(""), min_price: str = Query(""),
           hide_critical: bool = Query(False),
@@ -2590,7 +2762,7 @@ def index(province: str | None = Query(None), district: str | None = Query(None)
     if sort not in ORDER_MAP:
         sort = ""
     order = ORDER_MAP.get(sort)
-    is_admin = bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+    is_admin = admin_ok(request, token)
     rows, total = fetch_rows(
         province=province, district=district, ptype=ptype, max_price=max_price_v,
         min_price=min_price_v, hide_critical=hide_critical, institution=institution,
@@ -2650,9 +2822,9 @@ def index(province: str | None = Query(None), district: str | None = Query(None)
 
 
 @app.get("/p/{source_code}/{ref}", response_class=HTMLResponse)
-def detail(source_code: str, ref: str, token: str = Query("")):
+def detail(request: Request, source_code: str, ref: str, token: str = Query("")):
     # ใส่ ?token= เพื่อดูแบบ admin — เห็นลิงก์ต้นทางเสมอไม่ว่าตั้งค่าไว้อย่างไร
-    is_admin = bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+    is_admin = admin_ok(request, token)
     r = find_row(source_code, ref, is_admin)
     if not r:
         raise HTTPException(404, "ไม่พบทรัพย์รายการนี้")
@@ -2680,16 +2852,36 @@ def detail(source_code: str, ref: str, token: str = Query("")):
 
     comp_blocks = load_comps(r.get("province"), r.get("district"),
                              r.get("property_type"))
+
+    # OG สำหรับแชร์ลิงก์ทรัพย์ใน LINE/FB — ราคา + ทำเล + รูปจริง
+    price = r.get("opening_price")
+    og_title = (f"{price:,.0f} บาท · " if price else "") + (r.get("title") or "ทรัพย์")
+    og_bits = [r.get("type_label")]
+    if r.get("land_area_sqwa"):
+        og_bits.append(f"{r['land_area_sqwa']} ตร.ว.")
+    if r.get("usable_area_sqm"):
+        og_bits.append(f"{r['usable_area_sqm']} ตร.ม.")
+    loc = " ".join(x for x in [r.get("district"), r.get("province")] if x)
+    if loc:
+        og_bits.append(loc)
+    if r.get("grade"):
+        og_bits.append(f"เกรด {r['grade']}")
+    og_desc = " · ".join(x for x in og_bits if x)
+    first_img = (r.get("images_view") or [{}])[0].get("url")
+    og_image = _abs_url(request, first_img)
+
     return env.get_template("detail.html").render(
         title=r["title"], r=r, specs=specs,
         comps=comp_blocks[0] if comp_blocks else None,
         contact_line_url=current_settings().get("contact_line_url"),
+        og_title=og_title, og_desc=og_desc, og_image=og_image, og_type="product",
+        og_url=_abs_url(request, f"/p/{source_code}/{ref}"),
         **base(is_admin=is_admin, admin_token=token))
 
 
 @app.get("/map", response_class=HTMLResponse)
-def map_view(token: str = Query("")):
-    is_admin = bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+def map_view(request: Request, token: str = Query("")):
+    is_admin = admin_ok(request, token)
     rows, total_rows = fetch_rows(is_admin=is_admin)
     with_geo = sum(1 for r in rows if r.get("lat") and r.get("lng"))
     coarse = sum(1 for r in rows
@@ -2703,7 +2895,8 @@ def map_view(token: str = Query("")):
 
 
 @app.get("/api/properties.geojson")
-def properties_geojson(province: str | None = Query(None),
+def properties_geojson(request: Request,
+                       province: str | None = Query(None),
                        district: str | None = Query(None),
                        ptype: str | None = Query(None),
                        max_price: str = Query(""),
@@ -2712,7 +2905,7 @@ def properties_geojson(province: str | None = Query(None),
                        min_grade: str | None = Query(None),
                        show_special: bool = Query(False),
                        token: str = Query("")):
-    is_admin = bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+    is_admin = admin_ok(request, token)
     rows, _ = fetch_rows(province=province or None, ptype=ptype or None,
                          max_price=_num(max_price),
                          hide_critical=hide_critical, institution=institution,
@@ -2816,19 +3009,50 @@ def _admin_data():
     return health, props, zones, list(reversed(traffic))
 
 
-@app.get("/admin", response_class=HTMLResponse)
-def admin(token: str = Query("")):
-    """Dashboard หลังบ้าน
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(request: Request, next: str = Query("/admin")):
+    if admin_ok(request):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(next or "/admin", status_code=303)
+    return env.get_template("login.html").render(title="เข้าสู่ระบบ", next=next, error=None, **base())
 
-    ป้องกันด้วย token อย่างง่ายเท่านั้น เพียงพอสำหรับใช้บน 127.0.0.1
-    **ถ้าจะ deploy ขึ้นอินเทอร์เน็ต ต้องเปลี่ยนเป็น auth จริงก่อน**
-    """
-    if ADMIN_TOKEN and token != ADMIN_TOKEN:
-        raise HTTPException(401, "ต้องระบุ ?token= ให้ถูกต้อง")
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    import hmac
+    from fastapi.responses import RedirectResponse
+    form = await read_form(request)
+    if form.get("website"):                       # honeypot
+        return RedirectResponse("/admin/login", status_code=303)
+    pw = form.get("password", "")
+    nxt = form.get("next") or "/admin"
+    if ADMIN_PASSWORD and hmac.compare_digest(pw, ADMIN_PASSWORD):
+        resp = RedirectResponse(nxt, status_code=303)
+        resp.set_cookie(SESSION_COOKIE, make_session_cookie(), max_age=SESSION_DAYS * 86400,
+                        httponly=True, samesite="lax", secure=bool(BASE_URL.startswith("https")))
+        return resp
+    return HTMLResponse(env.get_template("login.html").render(
+        title="เข้าสู่ระบบ", next=nxt, error="รหัสผ่านไม่ถูกต้อง", **base()), status_code=401)
+
+
+@app.get("/admin/logout")
+def admin_logout():
+    from fastapi.responses import RedirectResponse
+    resp = RedirectResponse("/", status_code=303)
+    resp.delete_cookie(SESSION_COOKIE)
+    return resp
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin(request: Request, token: str = Query("")):
+    g = guard(request, token)
+    if g:
+        return g
     health, props, zones, traffic = _admin_data()
     return env.get_template("admin.html").render(
         title="Dashboard", health=health, hot_props=props,
-        hot_zones=zones, traffic=traffic, **base(admin_token=token))
+        hot_zones=zones, traffic=traffic,
+        **base(is_admin=True, admin_token=token))
 
 
 @app.post("/api/track")
@@ -2895,14 +3119,15 @@ async def api_feedback(request: Request):
     return {"ok": True}
 
 
-def _require_admin(token: str) -> None:
-    if ADMIN_TOKEN and token != ADMIN_TOKEN:
-        raise HTTPException(401, "ต้องระบุ ?token= ให้ถูกต้อง")
+def _require_admin(request: Request, token: str = "") -> None:
+    """redirect ไปหน้า login ถ้ายังไม่ได้สิทธิ์ (ใช้กับทั้ง GET page และ POST)"""
+    if not admin_ok(request, token):
+        raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
 
 
 @app.get("/admin/settings", response_class=HTMLResponse)
-def admin_settings(token: str = Query(""), saved: bool = Query(False)):
-    _require_admin(token)
+def admin_settings(request: Request, token: str = Query(""), saved: bool = Query(False)):
+    _require_admin(request, token)
     if DEMO_MODE:
         items = [{"key": k, "value": v, "value_type": "bool" if v in ("true", "false") else "text",
                   "label": k, "description": "โหมดตัวอย่าง แก้ไม่ได้",
@@ -2929,7 +3154,7 @@ def admin_settings(token: str = Query(""), saved: bool = Query(False)):
 @app.post("/admin/settings")
 async def admin_settings_save(request: Request):
     form = await read_form(request)
-    _require_admin(form.get("token", ""))
+    _require_admin(request, form.get("token", ""))
     if DEMO_MODE:
         raise HTTPException(400, "โหมดตัวอย่างแก้ค่าไม่ได้ ต้องต่อฐานข้อมูลจริงก่อน")
 
@@ -2993,9 +3218,9 @@ def _parcel_pending(limit: int = 300):
 
 
 @app.get("/admin/parcels", response_class=HTMLResponse)
-def admin_parcels(token: str = Query(""), saved: bool = Query(False),
+def admin_parcels(request: Request, token: str = Query(""), saved: bool = Query(False),
                   err: str = Query("")):
-    _require_admin(token)
+    _require_admin(request, token)
     pending, done = _parcel_pending()
     return env.get_template("admin_parcels.html").render(
         title="พิกัดแปลง LED", pending=pending, done=done,
@@ -3006,7 +3231,7 @@ def admin_parcels(token: str = Query(""), saved: bool = Query(False),
 async def admin_parcels_set(request: Request):
     from fastapi.responses import RedirectResponse
     form = await read_form(request)
-    _require_admin(form.get("token", ""))
+    _require_admin(request, form.get("token", ""))
     tok = form.get("token", "")
     ref = (form.get("ref") or "").strip()
     c = _parse_latlng(form.get("coord") or "")
@@ -3047,10 +3272,10 @@ async def inquire(request: Request):
         raise HTTPException(400, "กรุณากรอกชื่อและเบอร์โทร")
 
     if DEMO_MODE:
-        return env.get_template("thanks.html").render(
+        return HTMLResponse(env.get_template("thanks.html").render(
             title="ได้รับข้อมูลแล้ว",
             contact_line_url=st.DEFAULTS.get("contact_line_url"),
-            preferred=None, **base())
+            preferred=None, **base()))
 
     from core.db import connect
     with connect() as conn:
@@ -3098,15 +3323,15 @@ async def inquire(request: Request):
 
     labels = {"morning": "เช้า", "afternoon": "บ่าย",
               "evening": "เย็น", "anytime": "เวลาไหนก็ได้"}
-    return env.get_template("thanks.html").render(
+    return HTMLResponse(env.get_template("thanks.html").render(
         title="ได้รับข้อมูลแล้ว",
         contact_line_url=settings.get("contact_line_url"),
-        preferred=labels.get(form.get("preferred_time")), **base())
+        preferred=labels.get(form.get("preferred_time")), **base()))
 
 
 @app.get("/admin/inquiries", response_class=HTMLResponse)
-def admin_inquiries(token: str = Query("")):
-    _require_admin(token)
+def admin_inquiries(request: Request, token: str = Query("")):
+    _require_admin(request, token)
     if DEMO_MODE:
         rows = []
     else:
@@ -3199,8 +3424,8 @@ def monitor_data(days: int):
 
 
 @app.get("/admin/monitor", response_class=HTMLResponse)
-def admin_monitor(token: str = Query(""), days: int = Query(7)):
-    _require_admin(token)
+def admin_monitor(request: Request, token: str = Query(""), days: int = Query(7)):
+    _require_admin(request, token)
     days = 30 if days == 30 else 90 if days == 90 else 7
     if DEMO_MODE:
         totals, props, zones, daily = {}, [], [], []
@@ -3213,8 +3438,8 @@ def admin_monitor(token: str = Query(""), days: int = Query(7)):
 
 
 @app.get("/admin/feedback", response_class=HTMLResponse)
-def admin_feedback(token: str = Query("")):
-    _require_admin(token)
+def admin_feedback(request: Request, token: str = Query("")):
+    _require_admin(request, token)
     rows, stats = [], {"total": 0, "with_msg": 0, "avg_rating": None, "last7": 0}
     if not DEMO_MODE:
         from core.db import connect
@@ -3237,8 +3462,8 @@ def admin_feedback(token: str = Query("")):
 
 
 @app.get("/admin/promoted", response_class=HTMLResponse)
-def admin_promoted(token: str = Query("")):
-    _require_admin(token)
+def admin_promoted(request: Request, token: str = Query("")):
+    _require_admin(request, token)
     rows, sources = [], ["bam", "sam", "ktb", "ghb", "ttb", "led_auction"]
     if not DEMO_MODE:
         from core.db import connect
@@ -3271,10 +3496,130 @@ def admin_promoted(token: str = Query("")):
         **base(is_admin=True, admin_token=token))
 
 
+_ADD_FIELDS = ("title", "property_type", "opening_price", "appraised_price",
+               "province", "district", "subdistrict", "address_raw",
+               "land_area_sqwa", "usable_area_sqm", "bedrooms", "bathrooms",
+               "parking", "lat", "lng", "title_deed_type", "occupancy_note")
+
+
+@app.get("/admin/add", response_class=HTMLResponse)
+def admin_add(request: Request, token: str = Query(""), ref: str = Query(""),
+              saved: bool = Query(False)):
+    _require_admin(request, token)
+    f, edit = {}, False
+    ref = ref.strip()
+    if ref and not DEMO_MODE:
+        r = find_row("manual", ref, True)
+        if r:
+            edit = True
+            f = {k: r.get(k) for k in _ADD_FIELDS}
+            f["external_ref"] = ref
+    return env.get_template("add_property.html").render(
+        title="เพิ่มทรัพย์", f=f, edit=edit, saved=saved,
+        **base(is_admin=True, admin_token=token))
+
+
+@app.post("/admin/add")
+async def admin_add_save(request: Request):
+    import hashlib
+    import json as _json
+    import secrets
+    from fastapi.responses import RedirectResponse
+    form = await read_form(request)
+    _require_admin(request, form.get("token", ""))
+    tok = form.get("token", "")
+    if DEMO_MODE:
+        return RedirectResponse(f"/admin/add?token={tok}", status_code=303)
+
+    ref = (form.get("external_ref") or "").strip() or ("m-" + secrets.token_hex(4))
+
+    def _f(key):
+        v = (form.get(key) or "").strip().replace(",", "")
+        if not v:
+            return None
+        try:
+            return float(v)
+        except ValueError:
+            return None
+
+    def _i(key):
+        v = _f(key)
+        return int(v) if v is not None else None
+
+    lat, lng = _f("lat"), _f("lng")
+    cols = {
+        "province": (form.get("province") or "").strip() or None,
+        "district": (form.get("district") or "").strip() or None,
+        "subdistrict": (form.get("subdistrict") or "").strip() or None,
+        "address_raw": (form.get("address_raw") or "").strip() or None,
+        "lat": lat, "lng": lng,
+        "geo_precision": "parcel" if (lat is not None and lng is not None) else "district",
+        "property_type": (form.get("property_type") or "other").strip(),
+        "title_deed_type": (form.get("title_deed_type") or "").strip() or None,
+        "title": (form.get("title") or "").strip() or None,
+        "opening_price": _f("opening_price"),
+        "appraised_price": _f("appraised_price"),
+        "land_area_sqwa": _f("land_area_sqwa"),
+        "usable_area_sqm": _f("usable_area_sqm"),
+        "bedrooms": _i("bedrooms"),
+        "bathrooms": _i("bathrooms"),
+        "parking": _i("parking"),
+        "occupancy_note": (form.get("occupancy_note") or "").strip() or None,
+    }
+    content_hash = hashlib.sha256(_json.dumps(
+        {**cols, "ref": ref}, sort_keys=True, ensure_ascii=False, default=str
+    ).encode("utf-8")).hexdigest()
+    raw_fields = _json.dumps({**cols, "external_ref": ref, "manual": True},
+                             ensure_ascii=False, default=str)
+
+    from core.db import connect
+    with connect() as conn:
+        conn.execute(
+            """insert into listing_snapshots
+                 (source_code, external_ref, content_hash, parser_version, observed_at,
+                  province, district, subdistrict, address_raw, lat, lng, geo_precision,
+                  property_type, title_deed_type, title, opening_price, appraised_price,
+                  land_area_sqwa, usable_area_sqm, bedrooms, bathrooms, parking,
+                  occupancy_note, raw_fields)
+               values ('manual', %s, %s, 'manual', now(),
+                  %s,%s,%s,%s,%s,%s,%s,
+                  %s,%s,%s,%s,%s,
+                  %s,%s,%s,%s,%s,
+                  %s, %s::jsonb)
+               on conflict (source_code, external_ref, content_hash) do nothing""",
+            (ref, content_hash,
+             cols["province"], cols["district"], cols["subdistrict"], cols["address_raw"],
+             cols["lat"], cols["lng"], cols["geo_precision"],
+             cols["property_type"], cols["title_deed_type"], cols["title"],
+             cols["opening_price"], cols["appraised_price"],
+             cols["land_area_sqwa"], cols["usable_area_sqm"],
+             cols["bedrooms"], cols["bathrooms"], cols["parking"],
+             cols["occupancy_note"], raw_fields))
+
+        # รูป — ใส่ใหม่ก็แทนที่ของเดิม; เว้นว่างไว้ = คงรูปเดิม (ตอนแก้ไข)
+        urls = [u.strip() for u in (form.get("image_urls") or "").splitlines() if u.strip()]
+        if urls:
+            conn.execute(
+                "delete from listing_images where source_code = 'manual' and external_ref = %s",
+                (ref,))
+            for i, u in enumerate(urls):
+                conn.execute(
+                    """insert into listing_images
+                         (source_code, external_ref, image_source, origin_url,
+                          content_hash, is_primary, sort_order, attribution)
+                       values ('manual', %s, 'own_survey', %s, %s, %s, %s, 'แปลงดี')
+                       on conflict (source_code, external_ref, content_hash) do nothing""",
+                    (ref, u, hashlib.sha256(u.encode()).hexdigest(), i == 0, i))
+        conn.commit()
+
+    return RedirectResponse(f"/p/manual/{ref}" + (f"?token={tok}" if tok else ""),
+                            status_code=303)
+
+
 @app.post("/admin/promoted/add")
 async def admin_promoted_add(request: Request):
     form = await read_form(request)
-    _require_admin(form.get("token", ""))
+    _require_admin(request, form.get("token", ""))
     from fastapi.responses import RedirectResponse
     sc = (form.get("source_code") or "").strip()
     ref = (form.get("external_ref") or "").strip()
@@ -3299,7 +3644,7 @@ async def admin_promoted_add(request: Request):
 @app.post("/admin/promoted/remove")
 async def admin_promoted_remove(request: Request):
     form = await read_form(request)
-    _require_admin(form.get("token", ""))
+    _require_admin(request, form.get("token", ""))
     from fastapi.responses import RedirectResponse
     sc = (form.get("source_code") or "").strip()
     ref = (form.get("external_ref") or "").strip()
@@ -3314,7 +3659,8 @@ async def admin_promoted_remove(request: Request):
 
 
 @app.get("/health", response_class=HTMLResponse)
-def health():
+def health(request: Request, token: str = Query("")):
+    _require_admin(request, token)
     runs = []
     if not DEMO_MODE:
         from core.db import connect
@@ -3323,7 +3669,8 @@ def health():
                 """select source_code, started_at, status, pages_fetched,
                           rows_new, error_count
                    from ingest_runs order by started_at desc limit 30""").fetchall()]
-    return env.get_template("health.html").render(title="สุขภาพระบบ", runs=runs, **base())
+    return env.get_template("health.html").render(title="สุขภาพระบบ", runs=runs,
+                                                   **base(is_admin=True, admin_token=token))
 
 
 if __name__ == "__main__":
