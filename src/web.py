@@ -3449,20 +3449,27 @@ def sitemap(request: Request):
             (f"{base_u}/articles", None, "weekly", "0.5"),
             (f"{base_u}/about", None, "monthly", "0.3")]
 
-    # หน้า landing โซน/ประเภท (programmatic SEO)
-    try:
-        for prov, _n in zone_provinces():
-            urls.append((f"{base_u}/zone/{quote(prov)}", None, "weekly", "0.7"))
-            for t, _c in zone_types(prov):
-                if TYPE_LABELS.get(t):
-                    urls.append((f"{base_u}/zone/{quote(prov)}/{t}", None, "weekly", "0.6"))
-    except Exception as exc:                                       # noqa: BLE001
-        log.warning("sitemap zone ล้มเหลว: %s", str(exc)[:100])
-
+    # ดึงทุกอย่างในคอนเนกชันเดียว (2 query) — เร็วพอสำหรับ free tier
+    # กัน Googlebot fetch timeout: เดิมเปิด DB ทีละจังหวัด ~77 รอบ ทำให้ช้าจนดึงไม่ได้
     if not DEMO_MODE:
         try:
             from core.db import connect
             with connect() as conn:
+                # หน้า landing โซน/ประเภท (programmatic SEO) — query เดียว group province×type
+                zrows = conn.execute(
+                    "select province, property_type from v_listings_with_grade "
+                    "where province is not null "
+                    "group by province, property_type order by province").fetchall()
+                seen_prov: set = set()
+                for zr in zrows:
+                    prov = zr["province"]
+                    if prov not in seen_prov:
+                        seen_prov.add(prov)
+                        urls.append((f"{base_u}/zone/{quote(prov)}", None, "weekly", "0.7"))
+                    t = zr["property_type"]
+                    if t and TYPE_LABELS.get(t):
+                        urls.append((f"{base_u}/zone/{quote(prov)}/{t}", None, "weekly", "0.6"))
+                # หน้าทรัพย์รายรายการ
                 rows = conn.execute(
                     """select source_code, external_ref, max(observed_at)::date as lastmod
                          from listing_snapshots
