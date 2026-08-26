@@ -3750,6 +3750,7 @@ def article_page(request: Request, slug: str):
 @app.get("/admin/articles")
 def admin_articles_list(request: Request, token: str = Query("")):
     """ลิสต์ slug บทความที่มีอยู่ (JSON) — ให้ agent เช็กกันเขียนซ้ำ"""
+    token = token or request.headers.get("x-admin-token", "")
     if not admin_ok(request, token):
         raise HTTPException(403, "ต้องยืนยันตัวตนแอดมิน")
     items = [{"slug": a["slug"], "title": a["title"], "updated": a.get("updated")}
@@ -3764,8 +3765,9 @@ async def admin_article_publish(request: Request, token: str = Query("")):
     ต้องมี: slug, title, body_html (หรือ body) · ทางเลือก: excerpt, emoji
     """
     from fastapi.responses import JSONResponse
+    token = token or request.headers.get("x-admin-token", "")
     if not admin_ok(request, token):
-        raise HTTPException(403, "ต้องยืนยันตัวตนแอดมิน (ส่ง ?token=ADMIN_TOKEN)")
+        raise HTTPException(403, "ต้องยืนยันตัวตนแอดมิน (ส่ง header X-Admin-Token หรือ ?token=)")
     if DEMO_MODE:
         raise HTTPException(400, "โหมดตัวอย่าง: ไม่มีฐานข้อมูลให้บันทึก")
     try:
@@ -4096,6 +4098,33 @@ def _admin_data():
                    for r in conn.execute(
                        "select * from v_daily_traffic order by day desc limit 14").fetchall()]
     return health, props, zones, list(reversed(traffic))
+
+
+@app.get("/admin/stats")
+def admin_stats(request: Request, token: str = Query("")):
+    """สถิติภายในแอป (JSON) — ให้ agent monitor อ่านทำรายงาน SEO/marketing รายสัปดาห์
+    รวม: traffic 14 วัน, โซนฮิต, ทรัพย์ฮิต, สุขภาพแหล่งข้อมูล, ยอดรวม/แหล่ง, จำนวนบทความ
+    """
+    from fastapi.responses import JSONResponse
+    token = token or request.headers.get("x-admin-token", "")
+    if not admin_ok(request, token):
+        raise HTTPException(403, "ต้องยืนยันตัวตนแอดมิน")
+    health, props, zones, traffic = _admin_data()
+    totals: dict = {"listings": None, "by_source": [], "articles": len(load_articles())}
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                totals["listings"] = conn.execute(
+                    "select count(*) as n from v_listings_with_grade").fetchone()["n"]
+                totals["by_source"] = [dict(r) for r in conn.execute(
+                    "select source_code, count(*) as n from v_listings_with_grade "
+                    "group by source_code order by n desc").fetchall()]
+        except Exception as exc:                                   # noqa: BLE001
+            log.warning("stats totals ล้มเหลว: %s", str(exc)[:100])
+    payload = {"traffic_14d": traffic, "hot_zones": zones,
+               "hot_properties": props, "source_health": health, "totals": totals}
+    return JSONResponse(json.loads(json.dumps(payload, default=str)))
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
