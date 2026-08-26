@@ -1,7 +1,6 @@
 name: ingest-weekly
 
-# ดึงข้อมูลทั้งประเทศ (tier 3) รายสัปดาห์ — รันทุกแหล่งพร้อมกัน (matrix)
-# เวลารวม = แหล่งที่ช้าสุด ไม่ใช่ผลรวม; แต่ละแหล่งมีเวลา 3 ชม.ของตัวเอง
+# ดึงทั้งประเทศ (tier 3) รายสัปดาห์ — matrix ขนาน, จูน pages ราย source
 on:
   schedule:
     - cron: "0 20 * * 6"      # อาทิตย์ 03:00 เวลาไทย (เสาร์ 20:00 UTC)
@@ -12,9 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
-      fail-fast: false          # แหล่งหนึ่งพังไม่ยกเลิกแหล่งอื่น
+      fail-fast: false
       matrix:
-        source: [bam, ghb, ktb, led_auction, sam, ttb]
+        include:
+          - { source: bam,         pages: 40 }
+          - { source: ghb,         pages: 40 }
+          - { source: ktb,         pages: 40 }
+          - { source: ttb,         pages: 40 }
+          - { source: sam,         pages: 25 }
+          - { source: led_auction, pages: 15 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,11 +30,11 @@ jobs:
       - name: Ingest ${{ matrix.source }} (tier 3 ทั้งประเทศ)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python src/run.py ${{ matrix.source }} --tier 3 --max-pages 40
+        run: python src/run.py ${{ matrix.source }} --tier 3 --max-pages ${{ matrix.pages }}
 
   enrich:
     needs: ingest
-    if: always()                # ให้ enrich รันแม้บางแหล่งพลาด
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -55,7 +60,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Health report + LINE alert
+      - name: Health + cleanup stale + LINE
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}

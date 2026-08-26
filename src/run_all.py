@@ -155,6 +155,19 @@ def main() -> int:
     args = ap.parse_args()
 
     with connect() as conn:
+        # เก็บกวาดสถานะค้าง: run ที่ค้าง 'running' เกิน 4 ชม. = ถูกตัดกลางคัน ไม่จบจริง
+        # (subprocess/job timeout ถูกฆ่าก่อนเขียน finish_run สถานะเลยค้าง)
+        stale = conn.execute(
+            """update ingest_runs set status = 'failed', finished_at = now(),
+                   error_sample = coalesce(error_sample,
+                       'ค้าง running เกิน 4 ชม. — ถูกตัดกลางคัน (timeout/ถูกฆ่า)')
+               where status = 'running' and started_at < now() - interval '4 hours'
+               returning source_code""").fetchall()
+        if stale:
+            conn.commit()
+            log.info("เก็บกวาด run ค้าง %s แถว: %s", len(stale),
+                     ", ".join(sorted({r["source_code"] for r in stale})))
+
         if not args.health_only:
             sources, pending = active_sources(conn)
             if pending:

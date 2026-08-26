@@ -1,12 +1,41 @@
 name: ingest
 
+# รายวัน tier 1 (กทม+ปริมณฑล) — รันทุกแหล่งขนาน (matrix)
+# แหล่งช้า (led/sam) มี runner ของตัวเอง ไม่ฉุดให้ทั้ง job ถูกตัด
 on:
   schedule:
     - cron: "0 22 * * *"      # 05:00 เวลาไทย ทุกวัน (UTC 22:00)
-  workflow_dispatch:            # กดรันเองได้จากแท็บ Actions
+  workflow_dispatch:
 
 jobs:
-  daily:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false          # แหล่งหนึ่งพัง/ช้า ไม่ยกเลิกแหล่งอื่น
+      matrix:
+        include:
+          - { source: bam,         pages: 30 }
+          - { source: ghb,         pages: 30 }
+          - { source: ktb,         pages: 30 }
+          - { source: ttb,         pages: 30 }
+          - { source: sam,         pages: 20 }   # ช้ากว่า — ลดหน้า
+          - { source: led_auction, pages: 12 }   # เว็บ LED ช้ามาก — ลดหน้าให้จบทัน
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Ingest ${{ matrix.source }} (tier 1)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/run.py ${{ matrix.source }} --tier ${{ vars.TARGET_TIER || '1' }} --max-pages ${{ matrix.pages }}
+
+  enrich:
+    needs: ingest
+    if: always()                # enrich แม้บางแหล่งไม่ครบ
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -16,15 +45,25 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-
-      - name: Ingest ทุกแหล่ง (run_all)
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
-          LINE_NOTIFY_TO: ${{ secrets.LINE_NOTIFY_TO }}
-        run: python src/run_all.py --tier ${{ vars.TARGET_TIER || '1' }} --max-pages 30
-
       - name: Enrich (geocode + infra + grade)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/enrich.py all --detail-limit 150
+
+  health:
+    needs: enrich
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Health + cleanup stale + LINE
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_NOTIFY_TO: ${{ secrets.LINE_NOTIFY_TO }}
+        run: python src/run_all.py --health-only
