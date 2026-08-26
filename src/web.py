@@ -18,6 +18,7 @@ import pathlib
 import re
 import sys
 from datetime import date, timedelta
+from urllib.parse import quote
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -46,6 +47,8 @@ SECRET_KEY = os.environ.get("SECRET_KEY") or ADMIN_TOKEN or "dev-insecure-key"
 BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
 SESSION_COOKIE = "npa_admin"
 SESSION_DAYS = 7
+# Google Analytics 4 — ตั้ง GA_MEASUREMENT_ID (เช่น G-XXXXXXX) บน production เพื่อเปิดใช้
+GA_ID = os.environ.get("GA_MEASUREMENT_ID", "").strip()
 
 log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
@@ -943,6 +946,10 @@ TEMPLATES = {
 <meta name="twitter:title" content="{{ og_title or title }}">
 <meta name="twitter:description" content="{{ og_desc or 'รวมทรัพย์ NPA/ขายทอดตลาด จัดเกรด วิเคราะห์ทำเล' }}">
 {% if jsonld %}<script type="application/ld+json">{{ jsonld|safe }}</script>{% endif %}
+{% if ga_id %}<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id={{ ga_id }}"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}
+gtag('js',new Date());gtag('config','{{ ga_id }}',{anonymize_ip:true});</script>{% endif %}
 <!-- เก็บ Tailwind ไว้ในเครื่อง ไม่พึ่ง CDN ตอนรัน
      ถ้าพึ่ง CDN แล้วเน็ตช้าหรือ CDN ล่ม หน้าเว็บจะไม่มีสไตล์เลย
      ซึ่งเกิดขึ้นจริงตอนทดสอบ -->
@@ -1198,6 +1205,7 @@ function fbSend(){
   <div class="max-w-6xl mx-auto px-4 py-8 text-sm">
     <div class="flex flex-wrap gap-x-6 gap-y-2 mb-4">
       <a href="/about" class="brandlink">เกี่ยวกับแปลงดี</a>
+      <a href="/zone" class="brandlink">ทรัพย์ตามทำเล</a>
       <a href="/articles" class="brandlink">บทความ/คู่มือ</a>
       <a href="/contact" class="brandlink">ติดต่อเรา</a>
       <a href="/privacy" class="brandlink">นโยบายความเป็นส่วนตัว (PDPA)</a>
@@ -1214,7 +1222,31 @@ function fbSend(){
 {% extends "layout.html" %}{% block body %}
 {% set filter_on = province or district or ptype or min_price or max_price or institution or min_grade or hide_critical or show_special %}
 
-{% if not filter_on %}
+{% if landing_h1 %}
+<!-- Landing SEO (โซน/ประเภท) — H1 + เกริ่นนำคีย์เวิร์ด + ลิงก์ภายใน -->
+<nav class="text-xs mb-2" style="color:var(--pencil)" aria-label="breadcrumb">
+  <a href="/" class="brandlink">หน้าแรก</a> ›
+  <a href="/zone" class="brandlink">ทำเล</a>
+  {% if landing_crumb %} › <a href="{{ landing_crumb.href }}" class="brandlink">{{ landing_crumb.label }}</a>{% endif %}
+</nav>
+<section class="mb-5 rounded-2xl overflow-hidden relative"
+  style="background:linear-gradient(135deg,var(--ink) 0%,var(--survey-deep) 100%)">
+  <div class="absolute inset-0 opacity-15" aria-hidden="true"
+    style="background-image:linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px);background-size:38px 38px"></div>
+  <div class="relative px-5 py-7 sm:px-9 sm:py-9 text-white">
+    <h1 class="display text-2xl sm:text-[1.9rem] font-bold leading-tight text-white">{{ landing_h1 }}</h1>
+    {% if landing_intro %}<p class="text-white/85 text-sm mt-2.5 leading-relaxed max-w-3xl">{{ landing_intro }}</p>{% endif %}
+    {% if landing_links %}
+    <div class="mt-4 flex flex-wrap gap-2">
+      {% for l in landing_links %}
+      <a href="{{ l.href }}" class="chip px-3.5 py-1.5 text-[13px] font-medium bg-white/15 text-white border border-white/25 hover:bg-white/25 transition">{{ l.label }}</a>
+      {% endfor %}
+    </div>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% if not filter_on and not landing_h1 %}
 <!-- Hero search แบบ portal — โชว์เฉพาะหน้าแรกที่ยังไม่กรอง -->
 <section class="-mt-2 mb-5 rounded-2xl overflow-hidden relative"
   style="background:linear-gradient(135deg,var(--ink) 0%,var(--survey-deep) 100%)">
@@ -1343,9 +1375,9 @@ function fbSend(){
 <div class="xl:grid xl:grid-cols-[1fr_320px] xl:gap-6 xl:items-start">
 <div class="min-w-0">
 <div class="flex items-center justify-between mb-3">
-  <h1 class="text-xl font-semibold">พบ <span class="num">{{ "{:,}".format(count) }}</span> รายการ
+  <{{ 'h2' if landing_h1 else 'h1' }} class="text-xl font-semibold">พบ <span class="num">{{ "{:,}".format(count) }}</span> รายการ
     {% if district %}<span class="text-sm font-normal text-slate-500">ใน {{ district }}</span>
-    {% elif province %}<span class="text-sm font-normal text-slate-500">ใน {{ province }}</span>{% endif %}</h1>
+    {% elif province %}<span class="text-sm font-normal text-slate-500">ใน {{ province }}</span>{% endif %}</{{ 'h2' if landing_h1 else 'h1' }}>
   <a href="/map{{ qs }}" class="text-sm brandlink">ดูบนแผนที่ →</a>
 </div>
 
@@ -3073,7 +3105,7 @@ DEMO_REASON = (
 )
 
 BASE = {"demo": DEMO_MODE, "demo_reason": DEMO_REASON, "public_mode": PUBLIC_MODE,
-        "type_labels": TYPE_LABELS, "severity_style": SEVERITY_STYLE}
+        "type_labels": TYPE_LABELS, "severity_style": SEVERITY_STYLE, "ga_id": GA_ID}
 
 
 def base(**kw) -> dict:
@@ -3412,7 +3444,20 @@ def sitemap(request: Request):
 
     urls = [(f"{base_u}/", None, "daily", "1.0"),
             (f"{base_u}/map", None, "weekly", "0.6"),
-            (f"{base_u}/compare", None, "weekly", "0.5")]
+            (f"{base_u}/compare", None, "weekly", "0.5"),
+            (f"{base_u}/zone", None, "weekly", "0.7"),
+            (f"{base_u}/articles", None, "weekly", "0.5"),
+            (f"{base_u}/about", None, "monthly", "0.3")]
+
+    # หน้า landing โซน/ประเภท (programmatic SEO)
+    try:
+        for prov, _n in zone_provinces():
+            urls.append((f"{base_u}/zone/{quote(prov)}", None, "weekly", "0.7"))
+            for t, _c in zone_types(prov):
+                if TYPE_LABELS.get(t):
+                    urls.append((f"{base_u}/zone/{quote(prov)}/{t}", None, "weekly", "0.6"))
+    except Exception as exc:                                       # noqa: BLE001
+        log.warning("sitemap zone ล้มเหลว: %s", str(exc)[:100])
 
     if not DEMO_MODE:
         try:
@@ -3484,6 +3529,164 @@ def article_page(request: Request, slug: str):
         title=a["title"], a=a, og_title=a["title"], og_desc=a["excerpt"],
         og_type="article", og_url=page_url, canonical=page_url, jsonld=jsonld,
         **base())
+
+
+# ---------------------------------------------------------------------
+# Programmatic SEO — หน้าโซน/ทำเล (/zone, /zone/{province}, /zone/{province}/{ptype})
+# สร้างหน้า landing คีย์เวิร์ดแยกตามจังหวัด+ประเภท ให้ Google เก็บได้เยอะ
+# ใช้ fetch_rows + list.html เดิม เพิ่มแค่ H1/เกริ่นนำ/ลิงก์ภายใน
+# ---------------------------------------------------------------------
+_ZONE_CACHE: dict = {"prov": None, "ts": 0.0}
+
+
+def zone_provinces():
+    """[(province, n)] เรียงตามจำนวนทรัพย์มาก→น้อย — cache 1 ชม."""
+    import time
+    now = time.time()
+    if _ZONE_CACHE["prov"] is not None and now - _ZONE_CACHE["ts"] < 3600:
+        return _ZONE_CACHE["prov"]
+    out: list = []
+    if DEMO_MODE:
+        from collections import Counter
+        out = Counter(r["province"] for r in DEMO_ROWS if r.get("province")).most_common()
+    else:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                out = [(r["province"], r["n"]) for r in conn.execute(
+                    "select province, count(*) as n from v_listings_with_grade "
+                    "where province is not null group by province "
+                    "order by n desc, province").fetchall()]
+        except Exception as exc:                                   # noqa: BLE001
+            log.warning("zone_provinces ล้มเหลว: %s", str(exc)[:100])
+            out = []
+    _ZONE_CACHE.update(prov=out, ts=now)
+    return out
+
+
+def zone_types(province: str):
+    """[(property_type, n)] ของจังหวัดนั้น เรียงตามจำนวน"""
+    if DEMO_MODE:
+        from collections import Counter
+        return Counter(r.get("property_type") for r in DEMO_ROWS
+                       if r.get("province") == province and r.get("property_type")).most_common()
+    try:
+        from core.db import connect
+        with connect() as conn:
+            return [(r["property_type"], r["n"]) for r in conn.execute(
+                "select property_type, count(*) as n from v_listings_with_grade "
+                "where province=%s and property_type is not null "
+                "group by property_type order by n desc", (province,)).fetchall()]
+    except Exception as exc:                                       # noqa: BLE001
+        log.warning("zone_types ล้มเหลว: %s", str(exc)[:100])
+        return []
+
+
+def _render_landing(request, *, province=None, ptype=None, page=1,
+                    landing_h1="", landing_intro="", landing_links=None,
+                    landing_crumb=None, seo_title="", canonical="", jsonld=None):
+    """เรนเดอร์ list.html แบบหน้า landing — ใช้ fetch_rows เดิม"""
+    is_admin = admin_ok(request)
+    rows, total = fetch_rows(province=province, ptype=ptype, is_admin=is_admin,
+                             page=page, page_size=PAGE_SIZE,
+                             order="recommend_score desc nulls last, opening_price asc nulls last")
+    pages = max(1, -(-total // PAGE_SIZE))
+    opts = filter_options(province)
+    return env.get_template("list.html").render(
+        title=seo_title, rows=rows, count=total, page=page, pages=pages,
+        canonical=canonical, jsonld=jsonld,
+        featured=[], promoted=[], maxw="max-w-6xl",
+        provinces=opts["provinces"], districts=opts["districts"],
+        institutions=opts["institutions"], special_count=opts["special_count"],
+        districts_by_province=opts.get("districts_by_province", {}),
+        province=province, district=None, ptype=ptype,
+        max_price=None, min_price=None, hide_critical=False, qs="", sort="",
+        institution=None, min_grade=None, show_special=False,
+        landing_h1=landing_h1, landing_intro=landing_intro,
+        landing_links=landing_links or [], landing_crumb=landing_crumb,
+        **base(is_admin=is_admin, admin_token=""))
+
+
+@app.get("/zone", response_class=HTMLResponse)
+def zone_hub(request: Request):
+    provs = zone_provinces()
+    total = sum(n for _, n in provs)
+    links = [{"label": f"{p} ({n:,})", "href": f"/zone/{quote(p)}"} for p, n in provs[:60]]
+    intro = (f"เลือกดูทรัพย์ NPA บ้านหลุดจำนอง ที่ดิน คอนโด และทรัพย์ขายทอดตลาด "
+             f"แยกตามจังหวัด รวมกว่า {total:,} รายการจากธนาคาร AMC และกรมบังคับคดี "
+             f"เปรียบเทียบราคาและส่วนลดในแต่ละทำเลได้ในที่เดียว")
+    jsonld = _jsonld({
+        "@context": "https://schema.org", "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "หน้าแรก", "item": _abs_url(request, "/")},
+            {"@type": "ListItem", "position": 2, "name": "ทำเล", "item": _abs_url(request, "/zone")}]})
+    return _render_landing(
+        request, page=1,
+        landing_h1="ทรัพย์ NPA / ขายทอดตลาด แยกตามทำเล (จังหวัด)",
+        landing_intro=intro, landing_links=links,
+        seo_title="ทรัพย์ NPA ขายทอดตลาด แยกตามจังหวัด/ทำเล — บ้านหลุดจำนอง ที่ดิน คอนโด",
+        canonical=_abs_url(request, "/zone"), jsonld=jsonld)
+
+
+@app.get("/zone/{province}", response_class=HTMLResponse)
+def zone_province(request: Request, province: str):
+    known = {p for p, _ in zone_provinces()}
+    if known and province not in known:
+        raise HTTPException(404, "ไม่พบทำเลนี้")
+    types = zone_types(province)
+    n = sum(c for _, c in types)
+    links = [{"label": f"{TYPE_LABELS.get(t, t)} ({c:,})",
+              "href": f"/zone/{quote(province)}/{t}"} for t, c in types if TYPE_LABELS.get(t)]
+    intro = (f"รวมทรัพย์ NPA และทรัพย์ขายทอดตลาดใน{province} {n:,} รายการ — "
+             f"บ้านหลุดจำนอง ที่ดิน คอนโด อาคารพาณิชย์ จากธนาคาร AMC และกรมบังคับคดี "
+             f"จัดเกรดคุณภาพ วิเคราะห์ส่วนลดและทำเลให้เทียบง่าย เลือกประเภทที่สนใจได้ด้านล่าง")
+    jsonld = _jsonld({
+        "@context": "https://schema.org", "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "หน้าแรก", "item": _abs_url(request, "/")},
+            {"@type": "ListItem", "position": 2, "name": "ทำเล", "item": _abs_url(request, "/zone")},
+            {"@type": "ListItem", "position": 3, "name": province,
+             "item": _abs_url(request, f"/zone/{quote(province)}")}]})
+    return _render_landing(
+        request, province=province, page=1,
+        landing_h1=f"ทรัพย์ NPA / ขายทอดตลาด ใน{province}",
+        landing_intro=intro, landing_links=links,
+        landing_crumb={"label": province, "href": f"/zone/{quote(province)}"},
+        seo_title=f"ทรัพย์ NPA {province} — บ้านหลุดจำนอง ที่ดิน คอนโด ขายทอดตลาด ราคาต่ำกว่าตลาด",
+        canonical=_abs_url(request, f"/zone/{quote(province)}"), jsonld=jsonld)
+
+
+@app.get("/zone/{province}/{ptype}", response_class=HTMLResponse)
+def zone_province_type(request: Request, province: str, ptype: str):
+    if ptype not in TYPE_LABELS:
+        raise HTTPException(404, "ไม่พบประเภททรัพย์นี้")
+    known = {p for p, _ in zone_provinces()}
+    if known and province not in known:
+        raise HTTPException(404, "ไม่พบทำเลนี้")
+    tword = TYPE_LABELS.get(ptype, "ทรัพย์")
+    # ลิงก์ไปประเภทอื่นในจังหวัดเดียวกัน + กลับหน้าจังหวัด
+    links = [{"label": f"{TYPE_LABELS.get(t, t)}", "href": f"/zone/{quote(province)}/{t}"}
+             for t, _ in zone_types(province) if TYPE_LABELS.get(t) and t != ptype][:8]
+    links.append({"label": f"ดูทรัพย์ทุกประเภทใน{province}", "href": f"/zone/{quote(province)}"})
+    intro = (f"{tword}หลุดจำนอง/ขายทอดตลาดใน{province} — คัดจากธนาคาร AMC และกรมบังคับคดี "
+             f"ราคาต่ำกว่าตลาด พร้อมจัดเกรดคุณภาพ วิเคราะห์ส่วนลด ทำเล และแนวรถไฟฟ้า "
+             f"อัปเดตต่อเนื่อง เทียบราคาก่อนตัดสินใจได้ทันที")
+    jsonld = _jsonld({
+        "@context": "https://schema.org", "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "หน้าแรก", "item": _abs_url(request, "/")},
+            {"@type": "ListItem", "position": 2, "name": "ทำเล", "item": _abs_url(request, "/zone")},
+            {"@type": "ListItem", "position": 3, "name": province,
+             "item": _abs_url(request, f"/zone/{quote(province)}")},
+            {"@type": "ListItem", "position": 4, "name": tword,
+             "item": _abs_url(request, f"/zone/{quote(province)}/{ptype}")}]})
+    return _render_landing(
+        request, province=province, ptype=ptype, page=1,
+        landing_h1=f"{tword}หลุดจำนอง / ขายทอดตลาด ใน{province}",
+        landing_intro=intro, landing_links=links,
+        landing_crumb={"label": province, "href": f"/zone/{quote(province)}"},
+        seo_title=f"{tword} {province} หลุดจำนอง/ขายทอดตลาด ราคาต่ำกว่าตลาด — ทรัพย์ NPA",
+        canonical=_abs_url(request, f"/zone/{quote(province)}/{ptype}"), jsonld=jsonld)
 
 
 def _admin_data():
