@@ -107,6 +107,11 @@ def _abs_url(request: "Request", path_or_url: str | None) -> str | None:
     return base + (path_or_url if path_or_url.startswith("/") else "/" + path_or_url)
 
 
+def _jsonld(obj) -> str:
+    """แปลงเป็นสตริง JSON-LD ที่ฝังใน <script> ได้ปลอดภัย (กัน </script> injection)"""
+    return json.dumps(obj, ensure_ascii=False).replace("<", "\\u003c")
+
+
 @app.exception_handler(RuntimeError)
 async def db_error_handler(request: Request, exc: RuntimeError):
     """หน้า error ที่เป็นมิตรเมื่อต่อฐานข้อมูลไม่ได้
@@ -937,6 +942,7 @@ TEMPLATES = {
 <meta name="twitter:card" content="summary">{% endif %}
 <meta name="twitter:title" content="{{ og_title or title }}">
 <meta name="twitter:description" content="{{ og_desc or 'รวมทรัพย์ NPA/ขายทอดตลาด จัดเกรด วิเคราะห์ทำเล' }}">
+{% if jsonld %}<script type="application/ld+json">{{ jsonld|safe }}</script>{% endif %}
 <!-- เก็บ Tailwind ไว้ในเครื่อง ไม่พึ่ง CDN ตอนรัน
      ถ้าพึ่ง CDN แล้วเน็ตช้าหรือ CDN ล่ม หน้าเว็บจะไม่มีสไตล์เลย
      ซึ่งเกิดขึ้นจริงตอนทดสอบ -->
@@ -2877,10 +2883,18 @@ def index(request: Request, province: str | None = Query(None), district: str | 
     loc_word = f"ใน{district or province}" if (district or province) else "ทั่วไทย"
     seo_title = (f"{type_word} หลุดจำนอง/ขายทอดตลาด {loc_word} ราคาต่ำกว่าตลาด — ทรัพย์ NPA")
     canonical = _abs_url(request, "/")
+    home_jsonld = _jsonld([
+        {"@context": "https://schema.org", "@type": "Organization",
+         "name": "แปลงดี", "url": _abs_url(request, "/"),
+         "logo": _abs_url(request, "/static/logo.svg"),
+         "description": "รวมทรัพย์ NPA บ้านหลุดจำนอง ที่ดิน คอนโด จากธนาคาร AMC และกรมบังคับคดี พร้อมจัดเกรดคุณภาพ"},
+        {"@context": "https://schema.org", "@type": "WebSite",
+         "name": "แปลงดี", "url": _abs_url(request, "/")},
+    ]) if page == 1 else None
 
     return env.get_template("list.html").render(
         title=seo_title, rows=rows, count=total, page=page, pages=pages,
-        canonical=canonical,
+        canonical=canonical, jsonld=home_jsonld,
         featured=featured, promoted=promoted,
         maxw="max-w-7xl" if promoted else "max-w-6xl",
         provinces=opts["provinces"], districts=opts["districts"],
@@ -2941,14 +2955,41 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
     og_desc = " · ".join(x for x in og_bits if x)
     first_img = (r.get("images_view") or [{}])[0].get("url")
     og_image = _abs_url(request, first_img)
+    page_url = _abs_url(request, f"/p/{source_code}/{ref}")
+
+    # JSON-LD structured data — ให้ Google แสดงราคา/รูปในผลค้นหา (rich result)
+    addr = {"@type": "PostalAddress", "addressCountry": "TH"}
+    if r.get("province"):
+        addr["addressRegion"] = r["province"]
+    if r.get("district"):
+        addr["addressLocality"] = r["district"]
+    product = {"@context": "https://schema.org", "@type": "Product",
+               "name": r["title"], "description": og_desc, "category": r.get("type_label"),
+               "url": page_url}
+    if og_image:
+        product["image"] = og_image
+    if price:
+        product["offers"] = {"@type": "Offer", "price": int(price), "priceCurrency": "THB",
+                             "availability": "https://schema.org/InStock", "url": page_url}
+    if len(addr) > 2:
+        product["areaServed"] = addr
+    crumbs = [{"@type": "ListItem", "position": 1, "name": "ทรัพย์ทั้งหมด",
+               "item": _abs_url(request, "/")}]
+    if r.get("province"):
+        crumbs.append({"@type": "ListItem", "position": 2, "name": r["province"],
+                       "item": _abs_url(request, f"/?province={r['province']}")})
+    crumbs.append({"@type": "ListItem", "position": len(crumbs) + 1,
+                   "name": r["title"], "item": page_url})
+    breadcrumb = {"@context": "https://schema.org", "@type": "BreadcrumbList",
+                  "itemListElement": crumbs}
+    jsonld = _jsonld([product, breadcrumb])
 
     return env.get_template("detail.html").render(
         title=r["title"], r=r, specs=specs,
         comps=comp_blocks[0] if comp_blocks else None,
         contact_line_url=current_settings().get("contact_line_url"),
         og_title=og_title, og_desc=og_desc, og_image=og_image, og_type="product",
-        og_url=_abs_url(request, f"/p/{source_code}/{ref}"),
-        canonical=_abs_url(request, f"/p/{source_code}/{ref}"),
+        og_url=page_url, canonical=page_url, jsonld=jsonld,
         **base(is_admin=is_admin, admin_token=token))
 
 
