@@ -993,6 +993,16 @@ h1,h2,.display{font-family:"Bai Jamjuree","IBM Plex Sans Thai",sans-serif;
 .sheet:hover{border-color:var(--survey);box-shadow:0 4px 14px rgba(11,160,122,.10)}
 a.brandlink{color:var(--survey);font-weight:600}
 a.brandlink:hover{color:var(--survey-deep)}
+/* เนื้อหาบทความ/หน้าเนื้อหา — คืน default ที่ Tailwind reset เอาออก */
+.prose-npa h2{font-family:"Bai Jamjuree",sans-serif;font-weight:600;font-size:1.25rem;margin:1.4em 0 .4em;color:var(--ink)}
+.prose-npa h3{font-weight:600;font-size:1.05rem;margin:1.1em 0 .3em;color:var(--ink)}
+.prose-npa p{margin:.5em 0}
+.prose-npa ul{list-style:disc;padding-left:1.4em;margin:.5em 0}
+.prose-npa ol{list-style:decimal;padding-left:1.4em;margin:.5em 0}
+.prose-npa li{margin:.25em 0}
+.prose-npa a{color:var(--survey);font-weight:600}
+.prose-npa strong,.prose-npa b{color:var(--ink);font-weight:700}
+.prose-npa blockquote{border-left:3px solid var(--survey);padding-left:1em;color:var(--pencil);margin:.8em 0}
 .btn-primary{background:var(--ink);color:#fff}
 .btn-primary:hover{background:#0B1B29}
 .chip{border-radius:999px}
@@ -1053,6 +1063,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/{{ tk }}" class="navlink whitespace-nowrap">ทรัพย์</a>
       <a href="/map{{ tk }}" class="navlink whitespace-nowrap">แผนที่</a>
       <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
+      <a href="/articles" class="navlink whitespace-nowrap">บทความ</a>
       {% if is_admin %}
       <span class="w-px bg-slate-300 my-0.5 shrink-0" aria-hidden="true"></span>
       <a href="/admin/add{{ tk }}" class="navlink whitespace-nowrap" style="color:var(--survey)">+ เพิ่มทรัพย์</a>
@@ -1183,9 +1194,19 @@ function fbSend(){
 }
 </script>
 
-<footer class="max-w-6xl mx-auto px-4 py-8 text-xs text-slate-500 leading-relaxed">
-  ข้อมูลรวบรวมจากประกาศสาธารณะเพื่อการวิเคราะห์ ไม่ใช่คำแนะนำการลงทุน
-  ต้องตรวจสอบเอกสารสิทธิ์ ภาระผูกพัน แนวเขต และสภาพทรัพย์กับหน่วยงานที่เกี่ยวข้องก่อนตัดสินใจทุกครั้ง
+<footer class="mt-8 border-t" style="border-color:var(--rule)">
+  <div class="max-w-6xl mx-auto px-4 py-8 text-sm">
+    <div class="flex flex-wrap gap-x-6 gap-y-2 mb-4">
+      <a href="/about" class="brandlink">เกี่ยวกับแปลงดี</a>
+      <a href="/articles" class="brandlink">บทความ/คู่มือ</a>
+      <a href="/contact" class="brandlink">ติดต่อเรา</a>
+      <a href="/privacy" class="brandlink">นโยบายความเป็นส่วนตัว (PDPA)</a>
+      <a href="/terms" class="brandlink">เงื่อนไขการใช้งาน</a>
+    </div>
+    <p class="text-xs text-slate-500 leading-relaxed max-w-3xl">
+      แปลงดี — รวมทรัพย์ NPA/ขายทอดตลาดจากประกาศสาธารณะเพื่อการวิเคราะห์ <b>ไม่ใช่คำแนะนำการลงทุน</b>
+      ต้องตรวจสอบเอกสารสิทธิ์ ภาระผูกพัน แนวเขต และสภาพทรัพย์กับหน่วยงานที่เกี่ยวข้องก่อนตัดสินใจทุกครั้ง</p>
+  </div>
 </footer></body></html>
 """,
 
@@ -1653,6 +1674,54 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
        style="color:var(--survey)">ทำไมได้เกรดนี้ →</a>
     {% endif %}
   </div>
+
+  <!-- แชร์ -->
+  <div class="sheet p-3 flex items-center gap-2 flex-wrap text-sm">
+    <span class="font-medium text-slate-600">แชร์:</span>
+    <a href="#" onclick="return shareLine()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#06C755">LINE</a>
+    <a href="#" onclick="return shareFb()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#1877F2">Facebook</a>
+    <button onclick="copyLink(this)" class="px-3 py-1.5 rounded-lg border text-xs font-medium text-slate-600 hover:bg-slate-50">คัดลอกลิงก์</button>
+  </div>
+
+  {% if r.opening_price %}
+  <!-- เครื่องคำนวณผ่อน (ประมาณการ) -->
+  <div class="sheet p-4">
+    <h2 class="font-semibold text-sm mb-2">คำนวณค่าผ่อนคร่าว ๆ</h2>
+    <div class="grid grid-cols-3 gap-2 text-[11px] text-slate-500">
+      <label>เงินดาวน์ %<input id="m-dp" type="number" value="10" min="0" max="100"
+        oninput="calcMortgage()" class="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm text-slate-800"></label>
+      <label>ดอกเบี้ย %/ปี<input id="m-rate" type="number" value="5" step="0.1" min="0"
+        oninput="calcMortgage()" class="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm text-slate-800"></label>
+      <label>ระยะเวลา (ปี)<input id="m-yr" type="number" value="30" min="1" max="40"
+        oninput="calcMortgage()" class="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm text-slate-800"></label>
+    </div>
+    <div class="mt-3 flex items-baseline justify-between">
+      <span class="text-sm text-slate-500">ผ่อน/เดือน</span>
+      <span class="text-xl font-bold num" style="color:var(--survey-deep)"><span id="m-out">-</span>
+        <span class="text-xs font-normal text-slate-500">บาท</span></span>
+    </div>
+    <div class="text-[11px] text-slate-400 mt-1">วงเงินกู้ ~<span id="m-loan">-</span> บาท ·
+      ประมาณการเบื้องต้น ไม่รวมค่าธรรมเนียม/ประกัน — ตรวจสอบกับธนาคารจริงอีกครั้ง</div>
+  </div>
+  <script>
+    var PRICE0 = {{ r.opening_price or 0 }};
+    function _fmt(n){return Math.round(n).toLocaleString('th-TH');}
+    function calcMortgage(){
+      var dp=+document.getElementById('m-dp').value||0;
+      var rate=+document.getElementById('m-rate').value||0;
+      var yr=+document.getElementById('m-yr').value||1;
+      var loan=PRICE0*(1-dp/100); if(loan<0)loan=0;
+      var r=rate/100/12, n=yr*12;
+      var m=r>0?loan*r/(1-Math.pow(1+r,-n)):loan/n;
+      document.getElementById('m-out').textContent = m>0?_fmt(m):'-';
+      document.getElementById('m-loan').textContent = _fmt(loan);
+    }
+    function shareLine(){window.open('https://social-plugins.line.me/lineit/share?url='+encodeURIComponent(location.href),'_blank');return false;}
+    function shareFb(){window.open('https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(location.href),'_blank');return false;}
+    function copyLink(b){navigator.clipboard.writeText(location.href).then(function(){var t=b.textContent;b.textContent='คัดลอกแล้ว ✓';setTimeout(function(){b.textContent=t;},1500);});}
+    calcMortgage();
+  </script>
+  {% endif %}
 
   {% if r.forecast %}
   <div class="sheet p-4">
@@ -2788,9 +2857,215 @@ loadProps();
 </div>
 {% endblock %}
 """,
+
+"staticpage.html": """
+{% extends "layout.html" %}{% block body %}
+<article class="max-w-3xl mx-auto sheet p-6 sm:p-8">
+  <h1 class="display text-2xl font-bold mb-4">{{ heading }}</h1>
+  <div class="prose-npa space-y-3 text-[15px] leading-relaxed text-slate-700">{{ page_body|safe }}</div>
+  {% if updated %}<p class="mt-6 text-xs text-slate-400">อัปเดตล่าสุด: {{ updated }}</p>{% endif %}
+</article>
+{% endblock %}
+""",
+
+"articles.html": """
+{% extends "layout.html" %}{% block body %}
+<h1 class="display text-2xl font-bold mb-1">บทความ & คู่มือ</h1>
+<p class="text-sm text-slate-500 mb-5">ความรู้เรื่องทรัพย์ NPA ประมูลทรัพย์ และการตรวจสอบก่อนซื้อ</p>
+<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {% for a in articles %}
+  <a href="/article/{{ a.slug }}" class="sheet p-5 block hover:no-underline">
+    <div class="text-3xl">{{ a.emoji }}</div>
+    <h2 class="font-semibold mt-2 leading-snug">{{ a.title }}</h2>
+    <p class="text-sm text-slate-500 mt-1 line-clamp-3">{{ a.excerpt }}</p>
+    <span class="brandlink text-sm mt-3 inline-block">อ่านต่อ →</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}
+""",
+
+"article.html": """
+{% extends "layout.html" %}{% block body %}
+<article class="max-w-3xl mx-auto">
+  <a href="/articles" class="text-sm brandlink">← บทความทั้งหมด</a>
+  <div class="sheet p-6 sm:p-8 mt-3">
+    <div class="text-4xl">{{ a.emoji }}</div>
+    <h1 class="display text-2xl sm:text-3xl font-bold mt-2 leading-tight">{{ a.title }}</h1>
+    {% if a.updated %}<p class="text-xs text-slate-400 mt-2">อัปเดต: {{ a.updated }}</p>{% endif %}
+    <div class="prose-npa mt-5 space-y-3 text-[15px] leading-relaxed text-slate-700">{{ a.body|safe }}</div>
+  </div>
+  <div class="sheet p-5 mt-4 flex items-center justify-between flex-wrap gap-3">
+    <div class="text-sm text-slate-600">อยากดูทรัพย์จริง? เริ่มค้นหาได้เลย</div>
+    <a href="/" class="rounded-lg px-4 py-2 text-sm font-medium text-white" style="background:var(--survey)">ดูทรัพย์ทั้งหมด →</a>
+  </div>
+</article>
+{% endblock %}
+""",
 }
 
 env = Environment(loader=DictLoader(TEMPLATES), autoescape=True)
+
+# ─────────────────────────────────────────────────────────────
+# เนื้อหาหน้า static + บทความ — แก้ไขได้ภายหลัง (ผู้ใช้ปรับเนื้อหาเองได้)
+# ─────────────────────────────────────────────────────────────
+STATIC_PAGES = {
+    "about": {
+        "title": "เกี่ยวกับแปลงดี — รวมทรัพย์ NPA/ขายทอดตลาด",
+        "heading": "เกี่ยวกับแปลงดี",
+        "updated": "2026-08",
+        "body": """
+<p><b>แปลงดี</b> คือเว็บรวมทรัพย์ NPA (ทรัพย์รอการขายของสถาบันการเงิน) และทรัพย์ขายทอดตลาด
+จากหลายแหล่งไว้ที่เดียว — ธนาคาร, บริษัทบริหารสินทรัพย์ (AMC) และกรมบังคับคดี —
+พร้อม <b>จัดเกรดคุณภาพ วิเคราะห์ส่วนลด ทำเล และแนวรถไฟฟ้า</b> ให้เห็นชัดในหน้าเดียว</p>
+<h2>เราช่วยอะไรคุณ</h2>
+<ul>
+<li>รวมทรัพย์จากหลายแหล่งให้ค้นหาที่เดียว ไม่ต้องเปิดทีละเว็บ</li>
+<li>จัดเกรด A–E จากความครบของข้อมูล ส่วนลดจากราคาประเมิน และราคาต่อพื้นที่เทียบโซน</li>
+<li>ดูตำแหน่งบนแผนที่ + ระยะถึงสถานีรถไฟฟ้า และเตือนความเสี่ยง เช่น แนวเวนคืน</li>
+</ul>
+<h2>ข้อมูลมาจากไหน</h2>
+<p>รวบรวมจากประกาศสาธารณะของแต่ละแหล่ง เพื่อการวิเคราะห์และเปรียบเทียบ
+เราไม่เก็บชื่อคู่ความหรือเลขคดีตาม PDPA และลิงก์กลับไปยังต้นทางเสมอ</p>
+<blockquote>ข้อมูลบนเว็บนี้ใช้เพื่อการวิเคราะห์เบื้องต้น <b>ไม่ใช่คำแนะนำการลงทุน</b>
+ก่อนตัดสินใจทุกครั้งควรตรวจสอบเอกสารสิทธิ์ ภาระผูกพัน และสภาพทรัพย์กับหน่วยงานที่เกี่ยวข้อง</blockquote>
+""",
+    },
+    "contact": {
+        "title": "ติดต่อแปลงดี",
+        "heading": "ติดต่อเรา",
+        "updated": "2026-08",
+        "body": """
+<p>มีคำถาม อยากเสนอทรัพย์ ลงโฆษณา หรือแจ้งปัญหาการใช้งาน ติดต่อได้ตามช่องทางนี้</p>
+<ul>
+<li><b>LINE:</b> เพิ่มเพื่อนแล้วทักได้เลย (ลิงก์อยู่ในปุ่ม “คุยผ่าน LINE” หน้าทรัพย์)</li>
+<li><b>อีเมล:</b> [ใส่อีเมลของคุณที่นี่]</li>
+<li><b>ส่งความเห็น:</b> กดปุ่ม “ส่งความเห็น” มุมขวาล่างของทุกหน้า</li>
+</ul>
+<p>สนใจทรัพย์ไหนเป็นพิเศษ กรอกฟอร์ม “สนใจทรัพย์นี้” ในหน้ารายละเอียด เดี๋ยวเราติดต่อกลับพร้อมข้อมูลเพิ่มเติม</p>
+""",
+    },
+    "privacy": {
+        "title": "นโยบายความเป็นส่วนตัว (PDPA) — แปลงดี",
+        "heading": "นโยบายความเป็นส่วนตัว (PDPA)",
+        "updated": "2026-08",
+        "body": """
+<p>แปลงดีเคารพความเป็นส่วนตัวของคุณ และปฏิบัติตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล (PDPA)
+หน้านี้อธิบายว่าเราเก็บข้อมูลอะไร ใช้ทำอะไร และคุณมีสิทธิ์อย่างไร</p>
+<h2>ข้อมูลที่เราเก็บ</h2>
+<ul>
+<li><b>เมื่อคุณกรอกฟอร์มติดต่อ/สนใจทรัพย์:</b> ชื่อ เบอร์โทร LINE ID (ถ้าให้) และข้อความ — เพื่อติดต่อกลับเรื่องทรัพย์นั้น</li>
+<li><b>ความเห็น (feedback):</b> ข้อความและคะแนนที่คุณส่ง</li>
+<li><b>สถิติการใช้งานแบบไม่ระบุตัวตน:</b> หน้าที่เปิด/โซนที่สนใจ โดยใช้รหัสชั่วคราวที่หมุนทุกวัน ไม่เก็บ IP หรือชื่อ</li>
+</ul>
+<h2>เราใช้ข้อมูลอย่างไร</h2>
+<ul>
+<li>ติดต่อกลับตามที่คุณร้องขอ</li>
+<li>ปรับปรุงบริการและคัดทรัพย์ให้ตรงความต้องการ (เฉพาะเมื่อคุณยินยอมรับข่าวสาร)</li>
+</ul>
+<h2>การเปิดเผยและระยะเวลาเก็บ</h2>
+<p>เราไม่ขาย/ส่งต่อข้อมูลให้บุคคลที่สามโดยไม่ได้รับความยินยอมแยกต่างหาก
+และเก็บข้อมูลเท่าที่จำเป็นต่อวัตถุประสงค์ข้างต้น</p>
+<h2>สิทธิ์ของคุณ</h2>
+<p>คุณมีสิทธิ์ขอเข้าถึง แก้ไข ลบ หรือถอนความยินยอมได้ทุกเมื่อ โดยติดต่อผ่าน
+<a href="/contact">หน้าติดต่อเรา</a></p>
+<p class="text-xs text-slate-400">* เนื้อหานี้เป็นฉบับร่างเพื่อความโปร่งใส ควรให้ที่ปรึกษากฎหมายตรวจก่อนใช้จริง</p>
+""",
+    },
+    "terms": {
+        "title": "เงื่อนไขการใช้งาน — แปลงดี",
+        "heading": "เงื่อนไขการใช้งาน",
+        "updated": "2026-08",
+        "body": """
+<p>การใช้เว็บไซต์แปลงดีถือว่าคุณยอมรับเงื่อนไขต่อไปนี้</p>
+<h2>1. ลักษณะของข้อมูล</h2>
+<p>ข้อมูลทรัพย์รวบรวมจากประกาศสาธารณะของธนาคาร AMC และกรมบังคับคดี เพื่อการวิเคราะห์และเปรียบเทียบเบื้องต้น
+อาจมีความคลาดเคลื่อน ล้าสมัย หรือทรัพย์ถูกขาย/ถอนไปแล้ว</p>
+<h2>2. ไม่ใช่คำแนะนำการลงทุน</h2>
+<p>เกรด การวิเคราะห์ราคา และการประเมินต่าง ๆ เป็นข้อมูลประกอบการพิจารณา <b>ไม่ใช่คำแนะนำการลงทุนหรือการรับประกันใด ๆ</b>
+ก่อนตัดสินใจต้องตรวจสอบเอกสารสิทธิ์ ภาระผูกพัน แนวเขต และสภาพทรัพย์กับหน่วยงานที่เกี่ยวข้องด้วยตนเอง</p>
+<h2>3. ความรับผิด</h2>
+<p>แปลงดีไม่รับผิดต่อความเสียหายที่เกิดจากการนำข้อมูลไปใช้ตัดสินใจ ผู้ใช้ต้องตรวจสอบกับต้นทางเสมอ</p>
+<h2>4. ทรัพย์สินทางปัญญา</h2>
+<p>รูปภาพและข้อมูลบางส่วนเป็นลิขสิทธิ์ของต้นทาง แสดงเพื่อการอ้างอิง เราลิงก์กลับต้นทางเสมอ</p>
+<p class="text-xs text-slate-400">* เนื้อหานี้เป็นฉบับร่าง ควรให้ที่ปรึกษากฎหมายตรวจก่อนใช้จริง</p>
+""",
+    },
+}
+
+ARTICLES = [
+    {
+        "slug": "auction-led-guide",
+        "emoji": "⚖️",
+        "title": "ประมูลทรัพย์กรมบังคับคดี ทำยังไง? คู่มือมือใหม่",
+        "updated": "2026-08",
+        "excerpt": "ตั้งแต่หาทรัพย์ วางเงินประกัน ไปจนถึงวันประมูลและโอนกรรมสิทธิ์ — สรุปให้เข้าใจใน 5 นาที",
+        "body": """
+<p>การขายทอดตลาดของกรมบังคับคดีเป็นช่องทางซื้อทรัพย์ราคาต่ำกว่าตลาดที่ได้รับความนิยม
+แต่มีขั้นตอนและความเสี่ยงที่ต้องเข้าใจก่อน</p>
+<h2>ขั้นตอนโดยสรุป</h2>
+<ol>
+<li><b>หาทรัพย์:</b> ดูประกาศขายทอดตลาดตามวันนัด (บนแปลงดีก็รวมไว้แล้ว) จดเลขคดี/สำนักงานที่รับผิดชอบ</li>
+<li><b>ตรวจสอบก่อน:</b> ไปดูทรัพย์จริง ตรวจโฉนด ภาระผูกพัน ผู้อยู่อาศัย และการจำนองว่าติดไปกับทรัพย์หรือไม่</li>
+<li><b>วางหลักประกัน:</b> วันประมูลต้องนำแคชเชียร์เช็ค/เงินสดตามที่ประกาศกำหนดไปวางเป็นหลักประกันการเข้าสู้ราคา</li>
+<li><b>สู้ราคา:</b> เริ่มจากราคาเริ่มต้น (นัดหลัง ๆ ราคามักลดลง) ผู้ให้ราคาสูงสุดชนะ</li>
+<li><b>ชำระเงินส่วนที่เหลือ + โอน:</b> ตามกำหนดเวลา แล้วไปจดทะเบียนโอนที่สำนักงานที่ดิน</li>
+</ol>
+<h2>ข้อควรระวัง</h2>
+<ul>
+<li>ทรัพย์ขายตาม “สภาพที่เป็นอยู่” — อาจมีผู้อยู่อาศัยที่ต้องขับไล่เอง</li>
+<li>ตรวจว่า <b>จำนองติดไปกับทรัพย์</b> หรือไม่ (ถ้าติดไป ผู้ซื้อรับภาระ)</li>
+<li>เผื่อค่าใช้จ่ายโอน ค่าภาษี และค่าดำเนินการอื่น ๆ</li>
+</ul>
+<blockquote>เคล็ดลับ: ใช้เกรดและส่วนลดบนแปลงดีคัดกรองเบื้องต้น แล้วค่อยลงลึกตรวจเอกสารกับสำนักงานบังคับคดีก่อนวันประมูล</blockquote>
+""",
+    },
+    {
+        "slug": "buy-bank-npa",
+        "emoji": "🏦",
+        "title": "ซื้อทรัพย์ NPA จากธนาคาร/AMC ต่างจากประมูลยังไง?",
+        "updated": "2026-08",
+        "excerpt": "NPA ธนาคารมักซื้อง่ายกว่าประมูล ต่อรองได้ ผ่อนได้ — แต่ก็มีจุดที่ต้องดูให้ดี",
+        "body": """
+<p>ทรัพย์ NPA (Non-Performing Asset) คือทรัพย์ที่ธนาคารหรือบริษัทบริหารสินทรัพย์ (AMC) ยึดมาและนำออกขาย
+ต่างจากการประมูลของกรมบังคับคดีตรงที่ <b>ซื้อขายกับสถาบันโดยตรง</b></p>
+<h2>ข้อดีของ NPA ธนาคาร</h2>
+<ul>
+<li>ขั้นตอนชัดเจน มีเจ้าหน้าที่ดูแล ต่อรองราคาได้</li>
+<li>หลายรายการ <b>ขอสินเชื่อกับธนาคารเจ้าของทรัพย์ได้เลย</b> (ผ่อนได้)</li>
+<li>สถานะกรรมสิทธิ์มักชัดเจนกว่า (ธนาคารเป็นเจ้าของแล้ว)</li>
+</ul>
+<h2>สิ่งที่ต้องดู</h2>
+<ul>
+<li>ราคาตั้งขายอาจสูงกว่าประมูล — ดู <b>ส่วนลดจากราคาประเมิน</b> และเทียบราคาตลาดโซนนั้น (แปลงดีคำนวณให้)</li>
+<li>สภาพทรัพย์จริง มีผู้อยู่อาศัยไหม ต้องซ่อมเท่าไร</li>
+<li>เงื่อนไขการโอน/ค่าใช้จ่าย และโปรโมชันสินเชื่อ</li>
+</ul>
+<blockquote>บนแปลงดี ทรัพย์ธนาคารที่ “ลดแรง” จะมีป้ายบอก และเกรดจะสะท้อนทั้งส่วนลดและความครบของข้อมูล</blockquote>
+""",
+    },
+    {
+        "slug": "checklist-before-buy",
+        "emoji": "✅",
+        "title": "7 อย่างต้องเช็คก่อนซื้อทรัพย์มือสอง/หลุดจำนอง",
+        "updated": "2026-08",
+        "excerpt": "เช็กลิสต์กันพลาด ตั้งแต่โฉนด ภาระผูกพัน ผู้อยู่อาศัย ไปจนถึงทำเลและแนวเวนคืน",
+        "body": """
+<p>ทรัพย์ราคาถูกน่าสนใจ แต่ “ถูกเพราะมีเหตุ” เสมอ เช็ก 7 ข้อนี้ก่อนตัดสินใจ</p>
+<ol>
+<li><b>โฉนด/เอกสารสิทธิ์:</b> ตรงกับทรัพย์จริงไหม ประเภทโฉนด (นส.4จ/นส.3ก) เนื้อที่ตรงหรือไม่</li>
+<li><b>ภาระผูกพัน:</b> มีจำนอง อายัด ภาระจำยอม หรือคดีค้างอยู่หรือไม่</li>
+<li><b>ผู้อยู่อาศัย:</b> มีคนอยู่ไหม ต้องขับไล่เองหรือเปล่า (มีต้นทุน/เวลา)</li>
+<li><b>สภาพจริง:</b> ไปดูของจริง เช็กโครงสร้าง น้ำ ไฟ ความชื้น ค่าซ่อม</li>
+<li><b>ทำเล & การเข้าถึง:</b> ทางเข้า-ออก น้ำท่วมไหม ใกล้รถไฟฟ้า/สิ่งอำนวยความสะดวก</li>
+<li><b>แนวเวนคืน/ผังเมือง:</b> อยู่ในแนวเวนคืนหรือข้อจำกัดการใช้ที่ดินหรือไม่</li>
+<li><b>ราคาเทียบตลาด:</b> ถูกจริงหรือแค่ดูถูก เทียบราคาต่อ ตร.ว./ตร.ม. กับทรัพย์ใกล้เคียง</li>
+</ol>
+<blockquote>แปลงดีช่วยข้อ 5–7 ให้ (ระยะรถไฟฟ้า เตือนแนวเวนคืน เทียบราคาโซน) แต่ข้อ 1–4 ต้องตรวจเอกสารและดูของจริงเสมอ</blockquote>
+""",
+    },
+]
+ARTICLES_BY_SLUG = {a["slug"]: a for a in ARTICLES}
 
 DEMO_REASON = (
     "ยังไม่ได้ตั้งค่า DATABASE_URL จึงใช้ข้อมูลตัวอย่างไปก่อน"
@@ -3166,6 +3441,49 @@ def sitemap(request: Request):
     xml = "\n".join(parts)
     _SITEMAP_CACHE.update(xml=xml, ts=now)
     return Response(xml, media_type="application/xml")
+
+
+@app.get("/about", response_class=HTMLResponse)
+@app.get("/contact", response_class=HTMLResponse)
+@app.get("/privacy", response_class=HTMLResponse)
+@app.get("/terms", response_class=HTMLResponse)
+def static_page(request: Request):
+    """หน้าเนื้อหา: /about /contact /privacy /terms (route ชัดเจน ไม่ชนหน้าอื่น)"""
+    slug = request.url.path.strip("/")
+    pg = STATIC_PAGES.get(slug)
+    if not pg:
+        raise HTTPException(404, "ไม่พบหน้านี้")
+    return env.get_template("staticpage.html").render(
+        title=pg["title"], heading=pg["heading"], page_body=pg["body"],
+        updated=pg.get("updated"), canonical=_abs_url(request, f"/{slug}"),
+        og_desc=pg["heading"] + " — แปลงดี", **base())
+
+
+@app.get("/articles", response_class=HTMLResponse)
+def articles_list(request: Request):
+    return env.get_template("articles.html").render(
+        title="บทความ & คู่มือ ทรัพย์ NPA ประมูลทรัพย์", articles=ARTICLES,
+        canonical=_abs_url(request, "/articles"),
+        og_desc="รวมบทความและคู่มือเรื่องทรัพย์ NPA ประมูลกรมบังคับคดี และการตรวจสอบก่อนซื้อ",
+        **base())
+
+
+@app.get("/article/{slug}", response_class=HTMLResponse)
+def article_page(request: Request, slug: str):
+    a = ARTICLES_BY_SLUG.get(slug)
+    if not a:
+        raise HTTPException(404, "ไม่พบบทความนี้")
+    page_url = _abs_url(request, f"/article/{slug}")
+    jsonld = _jsonld({
+        "@context": "https://schema.org", "@type": "Article",
+        "headline": a["title"], "description": a["excerpt"],
+        "datePublished": a.get("updated"), "author": {"@type": "Organization", "name": "แปลงดี"},
+        "publisher": {"@type": "Organization", "name": "แปลงดี"},
+        "mainEntityOfPage": page_url})
+    return env.get_template("article.html").render(
+        title=a["title"], a=a, og_title=a["title"], og_desc=a["excerpt"],
+        og_type="article", og_url=page_url, canonical=page_url, jsonld=jsonld,
+        **base())
 
 
 def _admin_data():
