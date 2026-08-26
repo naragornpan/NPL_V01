@@ -499,6 +499,18 @@ SPECIAL_TYPES = {"movable", "common_area", "special"}
 PAGE_SIZE = 24
 
 
+# subquery ระยะถึงสถานีรถไฟฟ้า/รถไฟ (จาก infra engine) — join แบบ USING กัน column ชนกัน
+# ใช้ตารางจริง (property_links + property_infra_features จาก migration 002/030) ไม่พึ่ง view ใหม่
+# LEFT JOIN: ทรัพย์ที่ยังไม่ถูกคำนวณ infra จะได้ระยะเป็น null (ไม่พังทั้ง query)
+_TRANSIT_JOIN = (
+    " left join (select pl.source_code, pl.external_ref,"
+    " pif.nearest_station_m, pif.nearest_station_name"
+    " from property_links pl"
+    " join property_infra_features pif on pif.property_id = pl.property_id"
+    " ) t using (source_code, external_ref) "
+)
+
+
 def load_rows(where: str = "", params: tuple = (), limit: int | None = None,
               offset: int = 0, order: str | None = None) -> list[dict]:
     """อ่านทรัพย์จากฐาน — กรองที่ SQL ไม่ใช่ในหน่วยความจำ
@@ -523,8 +535,9 @@ def load_rows(where: str = "", params: tuple = (), limit: int | None = None,
                opening_price, list_price, special_price, appraised_price,
                renovated, auction_date, auction_round, occupancy_note,
                grade, score as grade_score, completeness, reasons,
-               recommend_score, first_seen, is_fresh
-          from v_recommended
+               recommend_score, first_seen, is_fresh,
+               nearest_station_m, nearest_station_name
+          from v_recommended {_TRANSIT_JOIN}
          {where}
          order by {order or default_order}
     """
@@ -586,7 +599,8 @@ def _reasons_to_flags(reasons) -> list[dict]:
 
 def build_filter(province=None, district=None, ptype=None, max_price=None,
                  min_price=None, institution=None, min_grade=None,
-                 show_special=False, hide_critical=False) -> tuple[str, tuple]:
+                 show_special=False, hide_critical=False,
+                 near_transit=None) -> tuple[str, tuple]:
     """สร้าง WHERE ให้ฐานข้อมูล — คืน (sql, params)"""
     conds, params = [], []
     if province:
@@ -617,6 +631,10 @@ def build_filter(province=None, district=None, ptype=None, max_price=None,
     if hide_critical:
         # flag ระดับ critical กดเกรดเป็น E เสมอ จึงกรองด้วยเกรดได้
         conds.append("(grade is null or grade <> 'E')")
+    if near_transit:
+        # ระยะถึงสถานีรถไฟฟ้า/รถไฟ ไม่เกิน N เมตร (จาก _TRANSIT_JOIN)
+        conds.append("nearest_station_m is not null and nearest_station_m <= %s")
+        params.append(near_transit)
     return ("where " + " and ".join(conds)) if conds else "", tuple(params)
 
 
@@ -626,7 +644,7 @@ def count_rows(where: str, params: tuple) -> int:
     from core.db import connect
     with connect() as conn:
         return conn.execute(
-            f"select count(*) as n from v_listings_with_grade {where}",
+            f"select count(*) as n from v_listings_with_grade {_TRANSIT_JOIN} {where}",
             params).fetchone()["n"]
 
 
@@ -686,13 +704,14 @@ def filter_options(province: str | None = None) -> dict:
 def fetch_rows(province=None, ptype=None, max_price=None, hide_critical=False,
                institution=None, min_grade=None, show_special=False,
                is_admin=False, district=None, min_price=None,
-               page=None, page_size=None, order=None):
+               page=None, page_size=None, order=None, near_transit=None):
     """คืน (rows, total) — กรองและแบ่งหน้าที่ SQL"""
     settings = current_settings()
     where, params = build_filter(
         province=province, district=district, ptype=ptype,
         max_price=max_price, min_price=min_price, institution=institution,
-        min_grade=min_grade, show_special=show_special, hide_critical=hide_critical)
+        min_grade=min_grade, show_special=show_special, hide_critical=hide_critical,
+        near_transit=near_transit)
 
     total = count_rows(where, params)
     limit = page_size
@@ -710,6 +729,9 @@ def fetch_rows(province=None, ptype=None, max_price=None, hide_critical=False,
             if min_grade and GRADE_ORDER.get(r.get("grade"), 0) < GRADE_ORDER[min_grade]:
                 return False
             if not show_special and not ptype and r.get("property_type") in SPECIAL_TYPES:
+                return False
+            if near_transit and (r.get("nearest_station_m") is None
+                                 or r.get("nearest_station_m") > near_transit):
                 return False
             return True
         raw = [r for r in raw if keep(r)]
@@ -921,6 +943,51 @@ def find_row(source_code: str, ref: str, is_admin: bool = False) -> dict | None:
     rows = load_rows("where source_code = %s and external_ref = %s",
                      (source_code, ref), limit=1)
     return enrich(rows[0], settings, is_admin) if rows else None
+
+
+def duplicates_for(row: dict, is_admin: bool = False) -> list[dict]:
+    """ทรัพย์ "แปลงเดียวกัน" ที่พบในแหล่งอื่น — สำหรับ dedupe/เทียบราคาข้ามแหล่ง
+
+    จับคู่แบบระมัดระวัง (กันจับผิดคู่): เฉพาะพิกัดระดับแปลง (parcel) ที่ตรงกันถึง
+    ~1 เมตร (ปัดทศนิยม 5 ตำแหน่ง) + ประเภททรัพย์ + จังหวัด/อำเภอเดียวกัน
+    เป็น read-only ไม่แตะ property_links/properties เดิม (ปลอดภัย/ย้อนกลับได้)
+    """
+    if DEMO_MODE:
+        return []
+    if row.get("geo_precision") != "parcel" or row.get("lat") is None \
+            or row.get("lng") is None:
+        return []
+    show_inst = is_admin or st.as_bool(current_settings(), "show_institution_name")
+    try:
+        from core.db import connect
+        with connect() as conn:
+            raw = conn.execute(
+                """select source_code, external_ref, institution_name, property_type,
+                          opening_price, grade, province, district, subdistrict
+                     from v_listings_with_grade
+                    where geo_precision = 'parcel'
+                      and property_type is not distinct from %s
+                      and province is not distinct from %s
+                      and district is not distinct from %s
+                      and round(lat::numeric, 5) = round(%s::numeric, 5)
+                      and round(lng::numeric, 5) = round(%s::numeric, 5)
+                      and not (source_code = %s and external_ref = %s)
+                    order by opening_price asc nulls last
+                    limit 8""",
+                (row.get("property_type"), row.get("province"), row.get("district"),
+                 row.get("lat"), row.get("lng"),
+                 row.get("source_code"), row.get("external_ref"))).fetchall()
+    except Exception as exc:                                       # noqa: BLE001
+        log.warning("หาทรัพย์ซ้ำข้ามแหล่งไม่สำเร็จ: %s", str(exc)[:100])
+        return []
+    out = []
+    for r in raw:
+        d = dict(r)
+        d["type_label"] = TYPE_LABELS.get(d.get("property_type"), "อื่น ๆ")
+        if not show_inst:
+            d["institution_name"] = None
+        out.append(d)
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -1220,7 +1287,7 @@ function fbSend(){
 
 "list.html": """
 {% extends "layout.html" %}{% block body %}
-{% set filter_on = province or district or ptype or min_price or max_price or institution or min_grade or hide_critical or show_special %}
+{% set filter_on = province or district or ptype or min_price or max_price or institution or min_grade or hide_critical or show_special or near_transit %}
 
 {% if landing_h1 %}
 <!-- Landing SEO (โซน/ประเภท) — H1 + เกริ่นนำคีย์เวิร์ด + ลิงก์ภายใน -->
@@ -1350,6 +1417,11 @@ function fbSend(){
       <option value="">ทุกเกรด</option>
       {% for g in ['A','B','C','D'] %}<option value="{{ g }}" {% if g==min_grade %}selected{% endif %}>{{ g }} ขึ้นไป</option>{% endfor %}
     </select></label>
+  <label class="text-sm">🚉 ใกล้รถไฟฟ้า
+    <select name="near_transit" class="mt-1 w-full border rounded-lg px-2 py-1.5">
+      {% for val,lbl in [('','ไม่จำกัด'),('500','ในรัศมี 500 ม.'),('1000','ในรัศมี 1 กม.'),('2000','ในรัศมี 2 กม.'),('3000','ในรัศมี 3 กม.')] %}
+      <option value="{{ val }}" {% if val and near_transit and val|int==near_transit %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+    </select></label>
   <label class="text-sm flex items-center gap-2 pb-1.5">
     <input type="checkbox" name="hide_critical" value="1" {% if hide_critical %}checked{% endif %}>
     ซ่อนรายการเสี่ยงสูง</label>
@@ -1457,6 +1529,11 @@ function fbSend(){
       {% if not r.discount_pct and r.special_discount_pct %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">ลดแรง {{ r.special_discount_pct }}%</span>{% endif %}
       {% if r.geo_precision=='parcel' %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">พิกัดจริง</span>{% endif %}
       {% if r.is_fresh %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">มาใหม่</span>{% endif %}
+    </div>
+    {% endif %}
+    {% if r.nearest_station_m and r.nearest_station_m <= 3000 %}
+    <div class="mt-2">
+      <span class="text-[11px] px-1.5 py-0.5 rounded font-medium" style="background:#E7F1FB;color:var(--sky)">🚉 ใกล้รถไฟฟ้า {% if r.nearest_station_m < 1000 %}{{ r.nearest_station_m|round|int }} ม.{% else %}{{ (r.nearest_station_m/1000)|round(1) }} กม.{% endif %}{% if r.nearest_station_name %} · {{ r.nearest_station_name }}{% endif %}</span>
     </div>
     {% endif %}
     {% if r.auction_date %}
@@ -1802,6 +1879,41 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     </div>
     <a href="/compare?province={{ r.province }}&district={{ r.district }}"
        class="mt-3 inline-block text-xs text-slate-600 hover:text-slate-900">ดูตารางเต็ม →</a>
+  </div>
+  {% endif %}
+
+  {% if dupes %}
+  <div class="sheet p-4">
+    <div class="flex items-center gap-2">
+      <h2 class="font-semibold text-sm">🔁 ทรัพย์แปลงเดียวกันในแหล่งอื่น</h2>
+      <span class="text-[11px] px-1.5 py-0.5 rounded-full text-white" style="background:var(--sky)">{{ dupes|length }} แหล่ง</span>
+    </div>
+    <p class="mt-1 text-[11px] text-slate-500">พิกัดระดับแปลงตรงกัน — น่าจะเป็นทรัพย์เดียวกันที่ถูกประกาศหลายที่ เทียบราคาก่อนตัดสินใจ</p>
+    {% if dupe_cheapest and r.opening_price and r.opening_price > dupe_cheapest %}
+    <div class="mt-2 text-xs px-2 py-1.5 rounded bg-amber-50 text-amber-800">⚠️ แหล่งอื่นมีราคาต่ำกว่า — ถูกสุด {{ "{:,.0f}".format(dupe_cheapest) }} บาท</div>
+    {% elif dupe_cheapest and r.opening_price and r.opening_price <= dupe_cheapest %}
+    <div class="mt-2 text-xs px-2 py-1.5 rounded bg-emerald-50 text-emerald-800">✓ รายการนี้ราคาต่ำสุดในบรรดาแหล่งที่พบ</div>
+    {% endif %}
+    <div class="mt-2 space-y-1.5 text-sm">
+      {% for d in dupes %}
+      <a href="/p/{{ d.source_code }}/{{ d.external_ref }}{% if admin_token %}?token={{ admin_token }}{% endif %}"
+         class="flex items-baseline justify-between gap-2 py-1 border-b last:border-0 hover:bg-slate-50 -mx-1 px-1 rounded">
+        <div>
+          <div class="font-medium">{{ d.institution_name or 'อีกแหล่ง' }}
+            {% if d.grade %}<span class="text-[10px] px-1 rounded bg-slate-100 g-{{ d.grade }}">{{ d.grade }}</span>{% endif %}</div>
+          <div class="text-[11px] text-slate-500">{{ d.type_label }}{% if d.district %} · {{ d.district }}{% endif %}</div>
+        </div>
+        <div class="text-right whitespace-nowrap">
+          <div class="font-semibold">{{ "{:,.0f}".format(d.opening_price or 0) }}</div>
+          {% if r.opening_price and d.opening_price and d.opening_price < r.opening_price %}
+          <div class="text-[11px] text-emerald-700">ถูกกว่า {{ "{:,.0f}".format(r.opening_price - d.opening_price) }}</div>
+          {% elif r.opening_price and d.opening_price and d.opening_price > r.opening_price %}
+          <div class="text-[11px] text-slate-400">แพงกว่า {{ "{:,.0f}".format(d.opening_price - r.opening_price) }}</div>
+          {% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
   </div>
   {% endif %}
 
@@ -3120,11 +3232,14 @@ def index(request: Request, province: str | None = Query(None), district: str | 
           hide_critical: bool = Query(False),
           institution: str | None = Query(None), min_grade: str | None = Query(None),
           show_special: bool = Query(False), page: int = Query(1, ge=1),
-          sort: str = Query(""), token: str = Query("")):
+          sort: str = Query(""), near_transit: str = Query(""), token: str = Query("")):
     # รับเป็นสตริงแล้วแปลงเอง — ฟอร์ม HTML ส่งช่องว่างมาเป็น "" เสมอ
     # ถ้าประกาศเป็น float FastAPI จะปฏิเสธทั้งคำขอด้วย error ที่ผู้ใช้อ่านไม่รู้เรื่อง
     max_price_v = _num(max_price)
     min_price_v = _num(min_price)
+    # ระยะใกล้รถไฟฟ้า (เมตร) — รับเฉพาะค่าที่กำหนดไว้ กันค่ามั่ว
+    near_transit_v = int(near_transit) if near_transit.isdigit() and \
+        int(near_transit) in (500, 1000, 2000, 3000) else None
     province = province or None
     district = district or None
     ptype = ptype or None
@@ -3145,14 +3260,15 @@ def index(request: Request, province: str | None = Query(None), district: str | 
         province=province, district=district, ptype=ptype, max_price=max_price_v,
         min_price=min_price_v, hide_critical=hide_critical, institution=institution,
         min_grade=min_grade, show_special=show_special, is_admin=is_admin,
-        page=page, page_size=PAGE_SIZE, order=order)
+        page=page, page_size=PAGE_SIZE, order=order, near_transit=near_transit_v)
     pages = max(1, -(-total // PAGE_SIZE))
     opts = filter_options(province)
 
     # "ทรัพย์แนะนำ" โชว์เฉพาะหน้าแรกที่ไม่ได้กรองอะไร (หน้าโฮมจริง ๆ)
     featured = []
     if page == 1 and not any([province, district, ptype, max_price_v, min_price_v,
-                              institution, min_grade, hide_critical, show_special]):
+                              institution, min_grade, hide_critical, show_special,
+                              near_transit_v]):
         try:
             featured = featured_by_hot_zone(is_admin, n=8)
         except Exception as exc:                               # noqa: BLE001
@@ -3168,7 +3284,8 @@ def index(request: Request, province: str | None = Query(None), district: str | 
     # ทรัพย์โปรโมท (rail ขวา บนจอกว้าง) — โชว์บนหน้าแรกที่ไม่ได้กรอง
     promoted = []
     if page == 1 and not any([province, district, ptype, max_price_v, min_price_v,
-                              institution, min_grade, hide_critical, show_special]):
+                              institution, min_grade, hide_critical, show_special,
+                              near_transit_v]):
         try:
             promoted = promoted_list(is_admin, n=6)
         except Exception as exc:                               # noqa: BLE001
@@ -3181,6 +3298,7 @@ def index(request: Request, province: str | None = Query(None), district: str | 
                 "hide_critical": 1 if hide_critical else None,
                 "show_special": 1 if show_special else None,
                 "sort": sort or None,
+                "near_transit": near_transit_v,
                 "token": token or None}
     qs = "?" + "&".join(f"{k}={v}" for k, v in qs_parts.items() if v) \
         if any(qs_parts.values()) else ""
@@ -3211,6 +3329,7 @@ def index(request: Request, province: str | None = Query(None), district: str | 
         max_price=max_price_v, min_price=min_price_v,
         hide_critical=hide_critical, qs=qs, sort=sort,
         institution=institution, min_grade=min_grade, show_special=show_special,
+        near_transit=near_transit_v,
         **base(is_admin=is_admin, admin_token=token))
 
 
@@ -3245,6 +3364,13 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
 
     comp_blocks = load_comps(r.get("province"), r.get("district"),
                              r.get("property_type"))
+
+    # ทรัพย์แปลงเดียวกันในแหล่งอื่น (dedupe/เทียบราคาข้ามแหล่ง)
+    dupes = duplicates_for(r, is_admin)
+    dupe_cheapest = None
+    if dupes:
+        prices = [d["opening_price"] for d in ([r] + dupes) if d.get("opening_price")]
+        dupe_cheapest = min(prices) if prices else None
 
     # OG สำหรับแชร์ลิงก์ทรัพย์ใน LINE/FB — ราคา + ทำเล + รูปจริง
     price = r.get("opening_price")
@@ -3294,6 +3420,7 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
     return env.get_template("detail.html").render(
         title=r["title"], r=r, specs=specs,
         comps=comp_blocks[0] if comp_blocks else None,
+        dupes=dupes, dupe_cheapest=dupe_cheapest,
         contact_line_url=current_settings().get("contact_line_url"),
         og_title=og_title, og_desc=og_desc, og_image=og_image, og_type="product",
         og_url=page_url, canonical=page_url, jsonld=jsonld,
