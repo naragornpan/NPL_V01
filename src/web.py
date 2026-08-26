@@ -920,7 +920,10 @@ TEMPLATES = {
 "layout.html": """
 <!doctype html><html lang="th"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ og_title or (title ~ ' · แปลงดี') }}</title>
+<title>{{ (og_title or title) ~ ' | แปลงดี' }}</title>
+<meta name="description" content="{{ og_desc or 'แปลงดี — รวมทรัพย์ NPA บ้านหลุดจำนอง ที่ดิน คอนโด อาคารพาณิชย์ จากธนาคาร AMC และกรมบังคับคดี (ขายทอดตลาด) ราคาต่ำกว่าตลาด พร้อมจัดเกรดคุณภาพ วิเคราะห์ส่วนลด ทำเล และแนวรถไฟฟ้า' }}">
+<meta name="keywords" content="ทรัพย์ NPA, บ้านหลุดจำนอง, บ้านมือสอง, ขายทอดตลาด, กรมบังคับคดี, ที่ดินราคาถูก, คอนโดมือสอง, บ้านธนาคาร, NPA, แปลงดี">
+{% if canonical %}<link rel="canonical" href="{{ canonical }}">{% endif %}
 <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
 <!-- OG/Twitter — พรีวิวตอนแชร์ลิงก์ใน LINE/FB -->
 <meta property="og:type" content="{{ og_type or 'website' }}">
@@ -1027,17 +1030,17 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
 <header class="sticky top-0 z-20 bg-white/90 backdrop-blur border-b" style="border-color:var(--rule)">
   <div class="max-w-6xl mx-auto px-4 py-2.5 flex items-center gap-5">
     <a href="/" class="flex items-center gap-2.5 shrink-0" title="แปลงดี">
-      <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        <!-- ผังแปลงที่ดิน: หลายแปลง หนึ่งแปลงถูกทำเครื่องหมาย
-             คือหน้าที่ของเครื่องมือนี้ทั้งหมด — หาแปลงที่ใช่จากพันแปลง -->
-        <rect x="1.5" y="1.5" width="29" height="29" rx="4"
-              stroke="var(--ink)" stroke-width="1.6"/>
-        <path d="M1.5 12.5H30.5M12 1.5V12.5M12 12.5V30.5M20.5 12.5V30.5"
-              stroke="var(--ink)" stroke-width="1.1" opacity=".55"/>
-        <rect x="12" y="12.5" width="8.5" height="18" fill="var(--seal)"/>
-        <circle cx="16.25" cy="21.5" r="2" fill="#fff"/>
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <!-- ผังแปลงที่ดิน + แปลงที่ "ใช่" ถูกเลือก (เครื่องหมายถูก) = แปลงดี -->
+        <defs><linearGradient id="pdlogo" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#12B98C"/><stop offset="1" stop-color="#0A7D60"/></linearGradient></defs>
+        <rect x="2.5" y="2.5" width="27" height="27" rx="7.5" fill="url(#pdlogo)"/>
+        <path d="M16 5V27M5 16H27" stroke="#fff" stroke-width="1.3" opacity=".45" stroke-linecap="round"/>
+        <rect x="17" y="17" width="9.5" height="9.5" rx="2.4" fill="#E24637"/>
+        <path d="M19.3 21.9l1.9 1.9 3.2-3.7" stroke="#fff" stroke-width="1.9"
+              stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span class="wordmark text-[19px] leading-none">แปลงดี</span>
+      <span class="wordmark text-[20px] leading-none">แปลง<span style="color:var(--survey)">ดี</span></span>
     </a>
     <nav class="flex gap-4 text-[13px] overflow-x-auto min-w-0">
       {% set tk = '?token=' ~ admin_token if admin_token else '' %}
@@ -1183,15 +1186,77 @@ function fbSend(){
 "list.html": """
 {% extends "layout.html" %}{% block body %}
 {% set filter_on = province or district or ptype or min_price or max_price or institution or min_grade or hide_critical or show_special %}
+
+{% if not filter_on %}
+<!-- Hero search แบบ portal — โชว์เฉพาะหน้าแรกที่ยังไม่กรอง -->
+<section class="-mt-2 mb-5 rounded-2xl overflow-hidden relative"
+  style="background:linear-gradient(135deg,var(--ink) 0%,var(--survey-deep) 100%)">
+  <div class="absolute inset-0 opacity-15" aria-hidden="true"
+    style="background-image:linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px);background-size:38px 38px"></div>
+  <div class="relative px-5 py-8 sm:px-9 sm:py-11">
+    <div class="text-white max-w-2xl">
+      <div class="text-[11px] tracking-widest uppercase font-semibold" style="color:rgba(255,255,255,.75)">แปลงดี · ทรัพย์ NPA / ขายทอดตลาด</div>
+      <h1 class="display text-2xl sm:text-[2rem] font-bold mt-1.5 leading-tight text-white">
+        หาบ้าน–ที่ดิน ราคาต่ำกว่าตลาด<br class="hidden sm:block"> จัดเกรดคุณภาพ ดูทำเลชัด</h1>
+      <p class="text-white/80 text-sm mt-2 leading-relaxed">
+        รวมจากธนาคาร · AMC · กรมบังคับคดี กว่า <b class="num text-white">{{ "{:,}".format(count) }}</b> รายการ
+        พร้อมวิเคราะห์ส่วนลด แนวรถไฟฟ้า และความเสี่ยง ในที่เดียว</p>
+    </div>
+    <form class="mt-5 bg-white rounded-xl p-2.5 grid gap-2 sm:grid-cols-[1.3fr_1fr_1fr_auto] items-end shadow-xl">
+      {% if admin_token %}<input type="hidden" name="token" value="{{ admin_token }}">{% endif %}
+      <label class="text-[11px] text-slate-500 font-medium">จังหวัด
+        <select name="province" class="mt-0.5 w-full border rounded-lg px-3 py-2.5 text-sm">
+          <option value="">ทุกจังหวัด</option>
+          {% for p in provinces %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select></label>
+      <label class="text-[11px] text-slate-500 font-medium">ประเภท
+        <select name="ptype" class="mt-0.5 w-full border rounded-lg px-3 py-2.5 text-sm">
+          <option value="">ทุกประเภท</option>
+          {% for k,v in type_labels.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+        </select></label>
+      <label class="text-[11px] text-slate-500 font-medium">ราคาไม่เกิน (บาท)
+        <input name="max_price" type="number" placeholder="เช่น 2000000"
+          class="mt-0.5 w-full border rounded-lg px-3 py-2.5 text-sm"></label>
+      <button class="rounded-lg px-6 py-2.5 text-sm font-semibold text-white whitespace-nowrap"
+        style="background:var(--seal)">ค้นหาทรัพย์</button>
+    </form>
+    <div class="mt-3 flex flex-wrap gap-2">
+      {% set chip_types = ['house','townhouse','condo','land','commercial'] %}
+      {% for k in chip_types %}{% if type_labels.get(k) %}
+      <a href="/?ptype={{ k }}"
+         class="chip px-3.5 py-1.5 text-[13px] font-medium bg-white/15 text-white border border-white/25 hover:bg-white/25 transition">{{ type_labels.get(k) }}</a>
+      {% endif %}{% endfor %}
+      <a href="/map" class="chip px-3.5 py-1.5 text-[13px] font-medium bg-white/15 text-white border border-white/25 hover:bg-white/25 transition">🗺️ ดูบนแผนที่</a>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if institutions %}
+<!-- แถบเลือกแหล่งทรัพย์ (source) — กดสลับแหล่งได้ตลอด -->
+<div class="mb-4 flex flex-wrap items-center gap-2">
+  <span class="text-[13px] font-medium text-slate-500 mr-0.5">แหล่ง:</span>
+  <a href="/{% if admin_token %}?token={{ admin_token }}{% endif %}"
+     class="chip px-3 py-1.5 text-[13px] font-medium border transition"
+     style="{% if not institution %}background:var(--survey);border-color:var(--survey);color:#fff{% else %}background:#fff;border-color:var(--rule);color:var(--pencil){% endif %}">ทุกแหล่ง</a>
+  {% for i in institutions %}
+  <a href="/?institution={{ i }}{% if admin_token %}&token={{ admin_token }}{% endif %}"
+     class="chip px-3 py-1.5 text-[13px] font-medium border transition hover:border-slate-400"
+     style="{% if i==institution %}background:var(--survey);border-color:var(--survey);color:#fff{% else %}background:#fff;border-color:var(--rule);color:var(--pencil){% endif %}">{{ i }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div id="filterbox" class="mb-5">
 <button type="button" onclick="fltToggle(this)" aria-expanded="{{ 'true' if filter_on else 'false' }}"
-  class="sheet w-full px-4 py-3 flex items-center justify-between text-sm font-medium sm:hidden">
-  <span class="flex items-center gap-2">ปรับตัวกรอง
+  class="sheet w-full px-4 py-3 flex items-center justify-between text-sm font-medium">
+  <span class="flex items-center gap-2">ตัวกรองเพิ่มเติม
+    <span class="hidden sm:inline text-xs font-normal text-slate-400">เขต · ช่วงราคา · แหล่ง · เกรด</span>
     {% if filter_on %}<span class="text-[11px] px-1.5 py-0.5 rounded-full text-white"
       style="background:var(--seal)">กำลังกรอง</span>{% endif %}</span>
   <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
 </button>
-<div id="filterwrap" class="{{ 'block' if filter_on else 'hidden' }} sm:block">
+<div id="filterwrap" class="{{ 'block' if filter_on else 'hidden' }}">
 <form class="sheet p-4 mt-2 grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 items-end">
   {% if admin_token %}<input type="hidden" name="token" value="{{ admin_token }}">{% endif %}
   <label class="text-sm">จังหวัด
@@ -1272,7 +1337,7 @@ function fbSend(){
         <img src="{{ r.images_view[0].url }}" alt="{{ r.title }}" loading="lazy"
              decoding="async" referrerpolicy="no-referrer"
              onerror="this.parentNode.classList.add('noimg');this.remove()"
-             class="w-full h-32 object-cover">
+             class="w-full h-36 object-cover">
         <span class="absolute top-2 left-2 seal seal-sm bg-white/95 g-{{ r.grade or 'none' }}"
               title="{{ r.grade_label }}">{{ r.grade or '—' }}</span>
       </div>
@@ -1305,7 +1370,7 @@ function fbSend(){
     <img src="{{ r.images_view[0].url }}" alt="{{ r.title }}"
          loading="lazy" decoding="async" referrerpolicy="no-referrer"
          onerror="this.parentNode.classList.add('noimg');this.remove()"
-         class="w-full h-40 object-cover">
+         class="w-full h-48 object-cover">
     <span class="absolute top-2.5 left-2.5 flex items-center gap-2">
       <span class="seal seal-sm bg-white/95 g-{{ r.grade or 'none' }}"
             title="{{ r.grade_label }}">{{ r.grade or '—' }}</span>
@@ -2807,8 +2872,15 @@ def index(request: Request, province: str | None = Query(None), district: str | 
     qs = "?" + "&".join(f"{k}={v}" for k, v in qs_parts.items() if v) \
         if any(qs_parts.values()) else ""
 
+    # SEO title — ใส่ keyword + ทำเล/ประเภทที่กำลังดู เพื่อให้ค้นเจอง่าย
+    type_word = TYPE_LABELS.get(ptype) if ptype else "บ้าน ที่ดิน คอนโด"
+    loc_word = f"ใน{district or province}" if (district or province) else "ทั่วไทย"
+    seo_title = (f"{type_word} หลุดจำนอง/ขายทอดตลาด {loc_word} ราคาต่ำกว่าตลาด — ทรัพย์ NPA")
+    canonical = _abs_url(request, "/")
+
     return env.get_template("list.html").render(
-        title="ทรัพย์ที่น่าสนใจ", rows=rows, count=total, page=page, pages=pages,
+        title=seo_title, rows=rows, count=total, page=page, pages=pages,
+        canonical=canonical,
         featured=featured, promoted=promoted,
         maxw="max-w-7xl" if promoted else "max-w-6xl",
         provinces=opts["provinces"], districts=opts["districts"],
@@ -2876,6 +2948,7 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         contact_line_url=current_settings().get("contact_line_url"),
         og_title=og_title, og_desc=og_desc, og_image=og_image, og_type="product",
         og_url=_abs_url(request, f"/p/{source_code}/{ref}"),
+        canonical=_abs_url(request, f"/p/{source_code}/{ref}"),
         **base(is_admin=is_admin, admin_token=token))
 
 
@@ -2990,6 +3063,68 @@ def compare(province: str | None = Query(None), district: str | None = Query(Non
     return env.get_template("compare.html").render(
         title="เทียบราคาตลาด", blocks=load_comps(province, district, ptype),
         haircut_pct=HAIRCUT_PCT, haircut_basis=HAIRCUT_BASIS, **base())
+
+
+@app.get("/robots.txt")
+def robots(request: Request):
+    from fastapi.responses import PlainTextResponse
+    base_u = BASE_URL or str(request.base_url).rstrip("/")
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        "Disallow: /api/\n"
+        f"Sitemap: {base_u}/sitemap.xml\n"
+    )
+    return PlainTextResponse(body)
+
+
+# cache sitemap ในหน่วยความจำ (สร้างใหม่ทุก 1 ชม.) — กันคิว DB 11k แถวทุกครั้งที่ถูกเรียก
+_SITEMAP_CACHE: dict = {"xml": None, "ts": 0.0}
+
+
+@app.get("/sitemap.xml")
+def sitemap(request: Request):
+    import time
+    from xml.sax.saxutils import escape
+    from fastapi.responses import Response
+
+    base_u = BASE_URL or str(request.base_url).rstrip("/")
+    now = time.time()
+    if _SITEMAP_CACHE["xml"] and now - _SITEMAP_CACHE["ts"] < 3600:
+        return Response(_SITEMAP_CACHE["xml"], media_type="application/xml")
+
+    urls = [(f"{base_u}/", None, "daily", "1.0"),
+            (f"{base_u}/map", None, "weekly", "0.6"),
+            (f"{base_u}/compare", None, "weekly", "0.5")]
+
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                rows = conn.execute(
+                    """select source_code, external_ref, max(observed_at)::date as lastmod
+                         from listing_snapshots
+                        group by source_code, external_ref
+                        order by max(observed_at) desc
+                        limit 45000""").fetchall()
+            for r in rows:
+                loc = f"{base_u}/p/{escape(r['source_code'])}/{escape(str(r['external_ref']))}"
+                urls.append((loc, r["lastmod"], "weekly", "0.8"))
+        except Exception as exc:                               # noqa: BLE001
+            log.warning("สร้าง sitemap ไม่สำเร็จ: %s", str(exc)[:120])
+
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, lastmod, freq, prio in urls:
+        parts.append("<url><loc>" + escape(loc) + "</loc>"
+                     + (f"<lastmod>{lastmod}</lastmod>" if lastmod else "")
+                     + f"<changefreq>{freq}</changefreq>"
+                     + f"<priority>{prio}</priority></url>")
+    parts.append("</urlset>")
+    xml = "\n".join(parts)
+    _SITEMAP_CACHE.update(xml=xml, ts=now)
+    return Response(xml, media_type="application/xml")
 
 
 def _admin_data():

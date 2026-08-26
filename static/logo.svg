@@ -1,10 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- แปลงดี — ผังแปลงที่ดินที่มีหนึ่งแปลงถูกทำเครื่องหมาย
-       สื่อหน้าที่ของเครื่องมือ: หาแปลงที่ใช่จากพันแปลง -->
-  <rect x="1.5" y="1.5" width="29" height="29" rx="4" fill="#FBFAF7"
-        stroke="#0F2434" stroke-width="1.6"/>
-  <path d="M1.5 12.5H30.5M12 1.5V12.5M12 12.5V30.5M20.5 12.5V30.5"
-        stroke="#0F2434" stroke-width="1.1" opacity=".55"/>
-  <rect x="12" y="12.5" width="8.5" height="18" fill="#B4322A"/>
-  <circle cx="16.25" cy="21.5" r="2" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs><linearGradient id="g" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#12B98C"/><stop offset="1" stop-color="#0A7D60"/></linearGradient></defs>
+  <rect x="2.5" y="2.5" width="27" height="27" rx="7.5" fill="url(#g)"/>
+  <path d="M16 5V27M5 16H27" stroke="#fff" stroke-width="1.3" opacity=".45" stroke-linecap="round"/>
+  <rect x="17" y="17" width="9.5" height="9.5" rx="2.4" fill="#E24637"/>
+  <path d="M19.3 21.9l1.9 1.9 3.2-3.7" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
