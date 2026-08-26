@@ -3655,13 +3655,15 @@ def sitemap(request: Request):
                 for zr in zrows:
                     prov, dist, t, n = (zr["province"], zr["district"],
                                         zr["property_type"], zr["n"])
+                    if not _real_place(prov):                       # ตัดจังหวัดขยะ
+                        continue
                     if prov not in seen_prov:
                         seen_prov.add(prov)
                         urls.append((f"{base_u}/zone/{quote(prov)}", None, "weekly", "0.7"))
                     if t and TYPE_LABELS.get(t) and (prov, t) not in seen_ptype:
                         seen_ptype.add((prov, t))
                         urls.append((f"{base_u}/zone/{quote(prov)}/{t}", None, "weekly", "0.6"))
-                    if dist:
+                    if dist and _real_place(dist):
                         dist_total[(prov, dist)] = dist_total.get((prov, dist), 0) + n
                         dist_rows.setdefault((prov, dist), []).append((t, n))
                 # เขต/อำเภอ: ใส่เฉพาะที่มีทรัพย์พอ (≥5) กันหน้าบางเกินไป; ประเภทในเขต ≥3
@@ -3806,6 +3808,13 @@ async def admin_article_publish(request: Request, token: str = Query("")):
 # ---------------------------------------------------------------------
 _ZONE_CACHE: dict = {"prov": None, "ts": 0.0}
 
+# ค่าจังหวัด/อำเภอที่ parse ไม่ได้ — ไม่สร้างหน้า zone / ไม่ใส่ sitemap (กันหน้าขยะ SEO)
+_PLACE_SKIP = {"", "-", "--", "ไม่ระบุ", "ไม่ทราบ", "n/a", "na", "none", "null"}
+
+
+def _real_place(name) -> bool:
+    return bool(name) and str(name).strip().lower() not in _PLACE_SKIP
+
 
 def zone_provinces():
     """[(province, n)] เรียงตามจำนวนทรัพย์มาก→น้อย — cache 1 ชม."""
@@ -3828,6 +3837,7 @@ def zone_provinces():
         except Exception as exc:                                   # noqa: BLE001
             log.warning("zone_provinces ล้มเหลว: %s", str(exc)[:100])
             out = []
+    out = [(p, n) for p, n in out if _real_place(p)]               # ตัดค่าขยะ
     _ZONE_CACHE.update(prov=out, ts=now)
     return out
 
@@ -3859,10 +3869,11 @@ def zone_districts(province: str):
     try:
         from core.db import connect
         with connect() as conn:
-            return [(r["district"], r["n"]) for r in conn.execute(
+            rows = [(r["district"], r["n"]) for r in conn.execute(
                 "select district, count(*) as n from v_listings_with_grade "
                 "where province=%s and district is not null "
                 "group by district order by n desc", (province,)).fetchall()]
+        return [(d, n) for d, n in rows if _real_place(d)]         # ตัดค่าขยะ
     except Exception as exc:                                       # noqa: BLE001
         log.warning("zone_districts ล้มเหลว: %s", str(exc)[:100])
         return []
@@ -4004,6 +4015,8 @@ def zone_province_type(request: Request, province: str, ptype: str):
 
 @app.get("/zone/{province}/d/{district}", response_class=HTMLResponse)
 def zone_district(request: Request, province: str, district: str):
+    if not _real_place(province) or not _real_place(district):
+        raise HTTPException(404, "ไม่พบทำเลนี้")
     known = {p for p, _ in zone_provinces()}
     if known and province not in known:
         raise HTTPException(404, "ไม่พบทำเลนี้")
@@ -4045,6 +4058,8 @@ def zone_district(request: Request, province: str, district: str):
 def zone_district_type(request: Request, province: str, district: str, ptype: str):
     if ptype not in TYPE_LABELS:
         raise HTTPException(404, "ไม่พบประเภททรัพย์นี้")
+    if not _real_place(province) or not _real_place(district):
+        raise HTTPException(404, "ไม่พบทำเลนี้")
     known = {p for p, _ in zone_provinces()}
     if known and province not in known:
         raise HTTPException(404, "ไม่พบทำเลนี้")
