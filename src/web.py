@@ -3220,6 +3220,48 @@ ARTICLES = [
 ]
 ARTICLES_BY_SLUG = {a["slug"]: a for a in ARTICLES}
 
+# บทความจาก DB (site_articles) — agent นักเขียน SEO เขียนแล้วเผยแพร่อัตโนมัติ
+# ไม่ต้อง deploy; รวมกับบทความ hardcoded (DB ชนะถ้า slug ซ้ำ) แล้ว cache 5 นาที
+_ARTICLES_CACHE: dict = {"items": None, "ts": 0.0}
+
+
+def load_articles() -> list[dict]:
+    """คืนบทความทั้งหมด (DB + hardcoded) เรียงใหม่→เก่า — cache 5 นาที"""
+    import time
+    now = time.time()
+    if _ARTICLES_CACHE["items"] is not None and now - _ARTICLES_CACHE["ts"] < 300:
+        return _ARTICLES_CACHE["items"]
+    db_items: list[dict] = []
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                rows = conn.execute(
+                    "select slug, title, excerpt, body_html, emoji, updated "
+                    "from site_articles where published is true "
+                    "order by updated desc, created_at desc").fetchall()
+            for r in rows:
+                db_items.append({
+                    "slug": r["slug"], "title": r["title"],
+                    "excerpt": r["excerpt"] or "", "body": r["body_html"],
+                    "emoji": r["emoji"] or "📝",
+                    "updated": str(r["updated"]) if r["updated"] else None})
+        except Exception as exc:                                   # noqa: BLE001
+            log.warning("โหลดบทความจาก DB ไม่สำเร็จ (รัน migration 036?): %s",
+                        str(exc)[:100])
+    db_slugs = {a["slug"] for a in db_items}
+    merged = db_items + [a for a in ARTICLES if a["slug"] not in db_slugs]
+    _ARTICLES_CACHE.update(items=merged, ts=now)
+    return merged
+
+
+def article_by_slug(slug: str) -> dict | None:
+    for a in load_articles():
+        if a["slug"] == slug:
+            return a
+    return None
+
+
 DEMO_REASON = (
     "ยังไม่ได้ตั้งค่า DATABASE_URL จึงใช้ข้อมูลตัวอย่างไปก่อน"
     if NO_DB else "เปิด DEMO_MODE=1 ไว้"
@@ -3585,6 +3627,14 @@ def sitemap(request: Request):
             (f"{base_u}/articles", None, "weekly", "0.5"),
             (f"{base_u}/about", None, "monthly", "0.3")]
 
+    # บทความ (DB + hardcoded) — ให้ Google เก็บหน้าบทความที่ agent เขียนด้วย
+    try:
+        for a in load_articles():
+            urls.append((f"{base_u}/article/{a['slug']}", a.get("updated"),
+                         "monthly", "0.5"))
+    except Exception as exc:                                       # noqa: BLE001
+        log.warning("sitemap articles ล้มเหลว: %s", str(exc)[:100])
+
     # ดึงทุกอย่างในคอนเนกชันเดียว (2 query) — เร็วพอสำหรับ free tier
     # กัน Googlebot fetch timeout: เดิมเปิด DB ทีละจังหวัด ~77 รอบ ทำให้ช้าจนดึงไม่ได้
     if not DEMO_MODE:
@@ -3669,7 +3719,7 @@ def static_page(request: Request):
 @app.get("/articles", response_class=HTMLResponse)
 def articles_list(request: Request):
     return env.get_template("articles.html").render(
-        title="บทความ & คู่มือ ทรัพย์ NPA ประมูลทรัพย์", articles=ARTICLES,
+        title="บทความ & คู่มือ ทรัพย์ NPA ประมูลทรัพย์", articles=load_articles(),
         canonical=_abs_url(request, "/articles"),
         og_desc="รวมบทความและคู่มือเรื่องทรัพย์ NPA ประมูลกรมบังคับคดี และการตรวจสอบก่อนซื้อ",
         **base())
@@ -3677,7 +3727,7 @@ def articles_list(request: Request):
 
 @app.get("/article/{slug}", response_class=HTMLResponse)
 def article_page(request: Request, slug: str):
-    a = ARTICLES_BY_SLUG.get(slug)
+    a = article_by_slug(slug)
     if not a:
         raise HTTPException(404, "ไม่พบบทความนี้")
     page_url = _abs_url(request, f"/article/{slug}")
@@ -3691,6 +3741,60 @@ def article_page(request: Request, slug: str):
         title=a["title"], a=a, og_title=a["title"], og_desc=a["excerpt"],
         og_type="article", og_url=page_url, canonical=page_url, jsonld=jsonld,
         **base())
+
+
+# ---------------------------------------------------------------------
+# API เผยแพร่บทความ — สำหรับ agent นักเขียน SEO (เขียนแล้ว POST เข้ามา เผยแพร่ทันที)
+# ยืนยันตัวตนด้วย ADMIN_TOKEN (?token=) หรือ cookie แอดมิน
+# ---------------------------------------------------------------------
+@app.get("/admin/articles")
+def admin_articles_list(request: Request, token: str = Query("")):
+    """ลิสต์ slug บทความที่มีอยู่ (JSON) — ให้ agent เช็กกันเขียนซ้ำ"""
+    if not admin_ok(request, token):
+        raise HTTPException(403, "ต้องยืนยันตัวตนแอดมิน")
+    items = [{"slug": a["slug"], "title": a["title"], "updated": a.get("updated")}
+             for a in load_articles()]
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"count": len(items), "articles": items})
+
+
+@app.post("/admin/articles")
+async def admin_article_publish(request: Request, token: str = Query("")):
+    """เผยแพร่/อัปเดตบทความ (upsert by slug) — รับ JSON หรือฟอร์ม
+    ต้องมี: slug, title, body_html (หรือ body) · ทางเลือก: excerpt, emoji
+    """
+    from fastapi.responses import JSONResponse
+    if not admin_ok(request, token):
+        raise HTTPException(403, "ต้องยืนยันตัวตนแอดมิน (ส่ง ?token=ADMIN_TOKEN)")
+    if DEMO_MODE:
+        raise HTTPException(400, "โหมดตัวอย่าง: ไม่มีฐานข้อมูลให้บันทึก")
+    try:
+        data = await request.json()
+    except Exception:                                              # noqa: BLE001
+        data = dict(await request.form())
+    import re as _re
+    slug = _re.sub(r"[^a-z0-9-]", "", (data.get("slug") or "").strip().lower())
+    title = (data.get("title") or "").strip()
+    body_html = (data.get("body_html") or data.get("body") or "").strip()
+    excerpt = (data.get("excerpt") or "").strip()[:400]
+    emoji = (data.get("emoji") or "📝").strip()[:8]
+    if not (slug and title and body_html):
+        raise HTTPException(422, "ต้องมี slug (a-z0-9-), title และ body_html")
+    from core.db import connect
+    with connect() as conn:
+        conn.execute(
+            """insert into site_articles
+                   (slug, title, excerpt, body_html, emoji, updated, published)
+                 values (%s, %s, %s, %s, %s, current_date, true)
+               on conflict (slug) do update set
+                   title = excluded.title, excerpt = excluded.excerpt,
+                   body_html = excluded.body_html, emoji = excluded.emoji,
+                   updated = current_date, published = true""",
+            (slug, title, excerpt, body_html, emoji))
+        conn.commit()
+    _ARTICLES_CACHE.update(items=None, ts=0.0)                     # ล้าง cache ให้ขึ้นทันที
+    return JSONResponse({"ok": True, "slug": slug,
+                         "url": _abs_url(request, f"/article/{slug}")})
 
 
 # ---------------------------------------------------------------------
