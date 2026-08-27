@@ -3516,6 +3516,7 @@ loadProps();
       <div class="text-2xl font-bold mt-1" style="color:var(--survey-deep)">{{ "{:,.0f}".format(d.price or 0) }}
         <span class="text-sm font-normal text-slate-500">บาท{{ '/เดือน' if d.listing_kind=='rent' else '' }}</span></div>
       {% if d.deposit %}<div class="text-sm text-slate-500">มัดจำ {{ "{:,.0f}".format(d.deposit) }} บาท</div>{% endif %}
+      <div class="mt-1 text-xs text-slate-400">👁 ดู {{ "{:,}".format(views_30d or 0) }} ครั้งใน 30 วัน</div>
       <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
         <span>{{ d.type_label }}</span>
         {% if d.land_area_sqwa %}<span>{{ d.land_area_sqwa }} ตร.ว.</span>{% endif %}
@@ -3542,11 +3543,19 @@ loadProps();
   {% endif %}
   <div class="sheet p-4 mt-4">
     <h2 class="font-semibold text-sm mb-2">ติดต่อผู้ลงประกาศ</h2>
+    {% if user_logged_in %}
     <div class="flex flex-wrap gap-2 text-sm">
       {% if d.contact_phone %}<a href="tel:{{ d.contact_phone }}" class="rounded-lg px-4 py-2 text-white" style="background:var(--survey)">โทร {{ d.contact_phone }}</a>{% endif %}
       {% if d.contact_line %}<span class="rounded-lg px-4 py-2 border">LINE: {{ d.contact_line }}</span>{% endif %}
       {% if d.contact_name %}<span class="px-2 py-2 text-slate-500">({{ d.contact_name }})</span>{% endif %}
+      {% if not d.contact_phone and not d.contact_line %}<span class="text-slate-400 text-sm py-2">ผู้ลงไม่ได้ให้ข้อมูลติดต่อ</span>{% endif %}
     </div>
+    {% else %}
+    <div class="rounded-lg border border-dashed p-4 text-center">
+      <div class="text-sm text-slate-500 mb-2">🔒 เข้าสู่ระบบเพื่อดูเบอร์โทร / LINE ของผู้ลงประกาศ</div>
+      <a href="/login?next=/m/{{ d.id }}" class="inline-block rounded-lg px-5 py-2 text-white text-sm font-medium" style="background:var(--survey)">เข้าสู่ระบบเพื่อดูข้อมูลติดต่อ</a>
+    </div>
+    {% endif %}
     <p class="text-[11px] text-amber-700 bg-amber-50 rounded p-2 mt-3">⚠️ ประกาศจากผู้ใช้ทั่วไป — แปลงดีไม่ได้ตรวจสอบกรรมสิทธิ์ ควรตรวจเอกสาร/ดูของจริงก่อนโอนเงินทุกครั้ง</p>
   </div>
 </div>
@@ -3570,6 +3579,7 @@ loadProps();
   <div class="min-w-0 flex-1">
     <div class="font-medium line-clamp-1">{{ r.title }}</div>
     <div class="text-sm text-slate-500">{{ "{:,.0f}".format(r.price or 0) }} บาท{{ '/เดือน' if r.listing_kind=='rent' else '' }} · {{ 'ให้เช่า' if r.listing_kind=='rent' else 'ขาย' }}</div>
+    <div class="text-xs text-slate-400 mt-0.5">👁 {{ "{:,}".format(r.views_30d or 0) }} วิว / 30 วัน</div>
   </div>
   <span class="text-[11px] px-2 py-1 rounded font-medium
     {% if r.status=='approved' %}bg-emerald-100 text-emerald-800{% elif r.status=='rejected' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-800{% endif %}">
@@ -4801,8 +4811,23 @@ def member_detail(request: Request, lid: str):
         d = _load_member(lid, allow_for="*")
     if not d:
         raise HTTPException(404, "ไม่พบประกาศนี้")
+    # เก็บ log ผู้กดดู (ไม่นับเจ้าของดูเอง) + นับยอดวิว 30 วัน
+    views_30d = 0
+    if not DEMO_MODE and d.get("status") == "approved":
+        try:
+            from core.db import connect
+            with connect() as conn:
+                if uid != d.get("posted_by"):
+                    conn.execute("insert into member_listing_views "
+                                 "(listing_id, viewer_uid) values (%s, %s)", (lid, uid))
+                    conn.commit()
+                views_30d = conn.execute(
+                    "select count(*) as n from member_listing_views where listing_id=%s "
+                    "and viewed_at > now() - interval '30 days'", (lid,)).fetchone()["n"]
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("บันทึก/นับวิวประกาศไม่สำเร็จ (รัน migration 039?): %s", str(exc)[:100])
     return env.get_template("member_detail.html").render(
-        title=d["title"], d=d, og_title=d["title"],
+        title=d["title"], d=d, views_30d=views_30d, og_title=d["title"],
         og_desc=(d.get("description") or d["title"])[:150],
         og_image=_abs_url(request, d["images"][0]) if d.get("images") else None,
         og_type="product", og_url=_abs_url(request, f"/m/{lid}"),
@@ -4824,6 +4849,14 @@ def my_listings(request: Request, posted: str = Query("")):
                     "select * from member_listings where posted_by=%s "
                     "order by created_at desc limit 100", (uid,)).fetchall()
                 rows = _member_cards(mrows, conn)
+                ids = [r["id"] for r in rows]
+                if ids:
+                    vmap = {vr["listing_id"]: vr["n"] for vr in conn.execute(
+                        "select listing_id, count(*) as n from member_listing_views "
+                        "where listing_id = any(%s) and viewed_at > now() - interval '30 days' "
+                        "group by listing_id", (ids,)).fetchall()}
+                    for r in rows:
+                        r["views_30d"] = vmap.get(r["id"], 0)
         except Exception as exc:                                    # noqa: BLE001
             log.warning("my-listings ล้มเหลว: %s", str(exc)[:120])
     return env.get_template("my_listings.html").render(
