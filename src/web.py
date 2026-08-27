@@ -2362,6 +2362,30 @@ fetch('/api/infra.geojson').then(r=>r.json()).then(gj=>{
 
 map.addLayer(cluster);
 
+// ── ประกาศตลาด (ผู้ลงเอง) — ขาย/เช่า เป็นชั้นแยก ติ๊กเปิดได้จาก layer control ──
+function marketLayer(kind, color, label){
+  fetch('/api/market.geojson'+(kind?('?kind='+kind):'')).then(r=>r.json()).then(gj=>{
+    if(!gj.features||!gj.features.length) return;
+    const lyr=L.layerGroup();
+    gj.features.forEach(f=>{
+      const c=f.geometry.coordinates, p=f.properties;
+      const mk=L.circleMarker([c[1],c[0]],{radius:8,color:'#fff',weight:2,fillColor:color,fillOpacity:0.95});
+      mk.bindPopup(`<div style="min-width:200px;max-width:240px">
+        ${p.image?`<img src="${p.image}" style="width:100%;height:110px;object-fit:cover;border-radius:6px">`:''}
+        <div style="font-size:11px;color:#64748b;margin-top:5px">${label} · ${p.type_label||''}</div>
+        <div style="font-weight:600;line-height:1.3;margin-top:2px">${p.title}</div>
+        <div style="font-size:17px;font-weight:600;margin-top:3px">${baht(p.price)}
+          <span style="font-size:11px;color:#64748b">บาท${kind==='rent'?'/เดือน':''}</span></div>
+        <a href="/m/${p.id}" style="display:block;text-align:center;margin-top:8px;padding:6px;background:#0f172a;color:#fff;border-radius:6px;font-size:12px;text-decoration:none">ดูประกาศ</a>
+      </div>`);
+      lyr.addLayer(mk);
+    });
+    layerCtrl.addOverlay(lyr, label+' ('+gj.features.length+')');
+  });
+}
+marketLayer('sale','#E24637','🏷️ ตลาด: ขาย');
+marketLayer('rent','#1C86C9','🔑 ตลาด: เช่า');
+
 // สร้าง query string ตามแหล่งที่ติ๊ก — ติ๊กครบหรือไม่ติ๊กเลย = ทุกแหล่ง
 function selectedQS(){
   const all=[...document.querySelectorAll('.srcflt')];
@@ -3283,6 +3307,8 @@ loadProps();
 """,
 "sell.html": """
 {% extends "layout.html" %}{% block body %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <div class="max-w-2xl mx-auto">
   <h1 class="text-xl font-semibold mb-1">ลงประกาศขาย / ให้เช่า <span class="text-sm font-normal text-slate-500">ฟรี</span></h1>
   <p class="text-sm text-slate-500 mb-4">ประกาศจะขึ้นเว็บหลังทีมงานตรวจอนุมัติ · ดูสถานะได้ที่ <a href="/my-listings" class="brandlink">ประกาศของฉัน</a></p>
@@ -3327,6 +3353,15 @@ loadProps();
         <label class="block text-sm">ตำบล/แขวง<input name="subdistrict" maxlength="60" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
       <label class="block text-sm">ที่อยู่/จุดสังเกต<input name="address_raw" maxlength="300" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+      <div>
+        <div class="text-sm mb-1">ปักหมุดตำแหน่ง <span class="text-xs text-slate-400">— คลิกบนแผนที่เพื่อวางหมุด (ลากปรับได้)</span></div>
+        <div class="flex gap-2 mb-1 items-center">
+          <button type="button" onclick="useMyLoc()" class="text-xs border rounded px-2 py-1">📍 ใช้ตำแหน่งปัจจุบัน</button>
+          <span id="latlngtext" class="text-xs text-slate-500"></span>
+        </div>
+        <div id="pickmap" class="rounded-lg border" style="height:280px"></div>
+        <input type="hidden" name="lat" id="lat"><input type="hidden" name="lng" id="lng">
+      </div>
       <label class="block text-sm">รายละเอียด
         <textarea name="description" rows="4" maxlength="4000" class="mt-1 w-full border rounded-lg px-3 py-2" placeholder="สภาพทรัพย์ จุดเด่น เฟอร์นิเจอร์ เงื่อนไข ฯลฯ"></textarea></label>
     </div>
@@ -3371,6 +3406,34 @@ loadProps();
     });
     inp.value='';
   });
+})();
+</script>
+<script>
+(function(){
+  var el=document.getElementById('pickmap'); if(!el||typeof L==='undefined') return;
+  var map=L.map('pickmap').setView([13.75,100.52],6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
+  var mk=null;
+  function save(lat,lng){
+    document.getElementById('lat').value=lat.toFixed(6);
+    document.getElementById('lng').value=lng.toFixed(6);
+    document.getElementById('latlngtext').textContent='พิกัด: '+lat.toFixed(5)+', '+lng.toFixed(5);
+  }
+  function setPin(lat,lng){
+    if(mk){mk.setLatLng([lat,lng]);}
+    else{mk=L.marker([lat,lng],{draggable:true}).addTo(map);
+      mk.on('dragend',function(){var p=mk.getLatLng();save(p.lat,p.lng);});}
+    save(lat,lng);
+  }
+  map.on('click',function(e){setPin(e.latlng.lat,e.latlng.lng);});
+  window.useMyLoc=function(){
+    if(!navigator.geolocation){alert('เบราว์เซอร์ไม่รองรับระบุตำแหน่ง');return;}
+    navigator.geolocation.getCurrentPosition(function(pos){
+      map.setView([pos.coords.latitude,pos.coords.longitude],16);
+      setPin(pos.coords.latitude,pos.coords.longitude);
+    },function(){alert('ขอตำแหน่งไม่สำเร็จ ลองคลิกบนแผนที่แทน');});
+  };
+  setTimeout(function(){map.invalidateSize();},250);
 })();
 </script>
 {% endblock %}
@@ -3433,6 +3496,10 @@ loadProps();
 """,
 "member_detail.html": """
 {% extends "layout.html" %}{% block body %}
+{% if d.lat and d.lng %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endif %}
 <div class="max-w-3xl mx-auto">
   <a href="/market" class="text-sm brandlink">← กลับตลาดประกาศ</a>
   <div class="sheet overflow-hidden mt-2">
@@ -3461,6 +3528,18 @@ loadProps();
       {% if d.description %}<div class="mt-4 text-[15px] leading-relaxed text-slate-700 whitespace-pre-line">{{ d.description }}</div>{% endif %}
     </div>
   </div>
+  {% if d.lat and d.lng %}
+  <div class="sheet overflow-hidden mt-4"><div id="mmap" style="height:260px"></div></div>
+  <script>
+  (function(){var el=document.getElementById('mmap');if(!el||typeof L==='undefined')return;
+    var lat={{ d.lat }}, lng={{ d.lng }};
+    var m=L.map('mmap').setView([lat,lng],15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(m);
+    L.marker([lat,lng]).addTo(m);
+    setTimeout(function(){m.invalidateSize();},250);
+  })();
+  </script>
+  {% endif %}
   <div class="sheet p-4 mt-4">
     <h2 class="font-semibold text-sm mb-2">ติดต่อผู้ลงประกาศ</h2>
     <div class="flex flex-wrap gap-2 text-sm">
@@ -4606,6 +4685,7 @@ async def sell_submit(request: Request):
         "district": (f.get("district") or "").strip()[:60] or None,
         "subdistrict": (f.get("subdistrict") or "").strip()[:60] or None,
         "address_raw": (f.get("address_raw") or "").strip()[:300] or None,
+        "lat": _num(f.get("lat") or ""), "lng": _num(f.get("lng") or ""),
         "price": _num(f.get("price") or ""), "deposit": _num(f.get("deposit") or ""),
         "land_area_sqwa": _num(f.get("land_area_sqwa") or ""),
         "usable_area_sqm": _num(f.get("usable_area_sqm") or ""),
@@ -4671,6 +4751,46 @@ def market(request: Request, kind: str = Query(""), province: str = Query(""),
         provinces=provinces, canonical=_abs_url(request, "/market"),
         og_desc="ประกาศขาย/ให้เช่าบ้าน ที่ดิน คอนโด จากผู้ลงประกาศโดยตรงบนแปลงดี",
         **ubase(request))
+
+
+@app.get("/api/market.geojson")
+def market_geojson(request: Request, kind: str = Query("")):
+    """ประกาศสมาชิกที่อนุมัติ + มีพิกัด → GeoJSON สำหรับหน้าแผนที่ (กรองขาย/เช่า)"""
+    from fastapi.responses import JSONResponse
+    feats: list = []
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            conds = ["status='approved'", "lat is not null", "lng is not null"]
+            params: list = []
+            if kind in ("sale", "rent"):
+                conds.append("listing_kind=%s"); params.append(kind)
+            where = "where " + " and ".join(conds)
+            with connect() as conn:
+                rows = conn.execute(
+                    f"select id, title, price, listing_kind, property_type, lat, lng "
+                    f"from member_listings {where} limit 3000", tuple(params)).fetchall()
+                ids = [r["id"] for r in rows]
+                imgmap: dict = {}
+                if ids:
+                    for ir in conn.execute(
+                            "select distinct on (listing_id) listing_id, url "
+                            "from member_listing_images where listing_id = any(%s) "
+                            "order by listing_id, sort_order", (ids,)).fetchall():
+                        imgmap[ir["listing_id"]] = ir["url"]
+            for r in rows:
+                feats.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point",
+                                 "coordinates": [float(r["lng"]), float(r["lat"])]},
+                    "properties": {"id": str(r["id"]), "title": r["title"],
+                                   "price": float(r["price"]) if r["price"] else None,
+                                   "kind": r["listing_kind"],
+                                   "type_label": TYPE_LABELS.get(r["property_type"], ""),
+                                   "image": imgmap.get(r["id"])}})
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("market.geojson ล้มเหลว: %s", str(exc)[:120])
+    return JSONResponse({"type": "FeatureCollection", "features": feats})
 
 
 @app.get("/m/{lid}", response_class=HTMLResponse)
