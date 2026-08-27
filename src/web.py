@@ -49,6 +49,11 @@ SESSION_COOKIE = "npa_admin"
 SESSION_DAYS = 7
 # Google Analytics 4 — ตั้ง GA_MEASUREMENT_ID (เช่น G-XXXXXXX) บน production เพื่อเปิดใช้
 GA_ID = os.environ.get("GA_MEASUREMENT_ID", "").strip()
+# LINE Login (ผู้ใช้ทั่วไป — ทรัพย์โปรด/แจ้งเตือน) — ตั้งค่าจาก LINE Developers Console
+LINE_LOGIN_CHANNEL_ID = os.environ.get("LINE_LOGIN_CHANNEL_ID", "").strip()
+LINE_LOGIN_CHANNEL_SECRET = os.environ.get("LINE_LOGIN_CHANNEL_SECRET", "").strip()
+LINE_LOGIN_ENABLED = bool(LINE_LOGIN_CHANNEL_ID and LINE_LOGIN_CHANNEL_SECRET)
+USER_COOKIE = "npa_user"        # cookie session ของผู้ใช้ LINE (แยกจาก admin)
 
 log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
@@ -98,6 +103,51 @@ def guard(request: "Request", token: str = ""):
         return None
     from fastapi.responses import RedirectResponse
     return RedirectResponse("/admin/login", status_code=303)
+
+
+# ---------------------------------------------------------------------
+# Session ผู้ใช้ LINE (แยกจาก admin) — cookie เซ็น HMAC เช่นกัน
+# ค่าใน cookie = "<line_user_id>|<exp>.<sig>"
+# ---------------------------------------------------------------------
+def make_user_cookie(uid: str) -> str:
+    import time
+    exp = str(int(time.time()) + 30 * 86400)          # อยู่ได้ 30 วัน
+    payload = f"{uid}|{exp}"
+    return f"{payload}.{_sign(payload)}"
+
+
+def current_user(request: "Request") -> str | None:
+    """คืน line_user_id ถ้า cookie ผู้ใช้ยังใช้ได้ ไม่งั้น None"""
+    import hmac
+    import time
+    v = request.cookies.get(USER_COOKIE)
+    if not v or "." not in v:
+        return None
+    payload, sig = v.rsplit(".", 1)
+    if not hmac.compare_digest(sig, _sign(payload)):
+        return None
+    uid, _, exp = payload.partition("|")
+    try:
+        if not uid or int(exp) < int(time.time()):
+            return None
+    except ValueError:
+        return None
+    return uid
+
+
+def user_fav_pairs(uid: str | None) -> set:
+    """เซ็ตของ (source_code, external_ref) ที่ผู้ใช้กดโปรด — ใช้ทำหัวใจ/กรอง"""
+    if not uid or DEMO_MODE:
+        return set()
+    try:
+        from core.db import connect
+        with connect() as conn:
+            return {(r["source_code"], r["external_ref"]) for r in conn.execute(
+                "select source_code, external_ref from user_favorites "
+                "where line_user_id=%s", (uid,)).fetchall()}
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("โหลดทรัพย์โปรดไม่สำเร็จ (รัน migration 037?): %s", str(exc)[:100])
+        return set()
 
 
 def _abs_url(request: "Request", path_or_url: str | None) -> str | None:
@@ -1138,6 +1188,14 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/map{{ tk }}" class="navlink whitespace-nowrap">แผนที่</a>
       <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
       <a href="/articles" class="navlink whitespace-nowrap">บทความ</a>
+      {% if line_login %}
+        {% if user_logged_in %}
+        <a href="/favorites" class="navlink whitespace-nowrap">❤️ ทรัพย์โปรด</a>
+        <a href="/auth/logout" class="navlink whitespace-nowrap text-slate-400">ออกจากระบบ</a>
+        {% else %}
+        <a href="/auth/line/login" class="navlink whitespace-nowrap" style="color:var(--survey)">เข้าสู่ระบบ</a>
+        {% endif %}
+      {% endif %}
       {% if is_admin %}
       <span class="w-px bg-slate-300 my-0.5 shrink-0" aria-hidden="true"></span>
       <a href="/admin/add{{ tk }}" class="navlink whitespace-nowrap" style="color:var(--survey)">+ เพิ่มทรัพย์</a>
@@ -1190,6 +1248,29 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
                                    external_ref:a.dataset.trackRef});
   });
 })();
+</script>
+<script>
+/* ทรัพย์โปรด — กดหัวใจ (toggle) ผ่าน /api/favorite; ยังไม่ล็อกอิน → พาไป LINE Login */
+window.toggleFav=function(btn){
+  var sc=btn.dataset.sc, ref=btn.dataset.ref;
+  btn.disabled=true;
+  fetch('/api/favorite',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({source_code:sc,external_ref:ref})})
+  .then(function(r){
+    if(r.status===401){ location.href='/auth/line/login?next='+encodeURIComponent(location.pathname); return null; }
+    return r.json();
+  })
+  .then(function(d){
+    btn.disabled=false;
+    if(!d||!d.ok) return;
+    var on=d.favorited;
+    btn.setAttribute('aria-pressed', on?'true':'false');
+    if(btn.dataset.label!=='0'){ btn.innerHTML = on ? '❤️ บันทึกแล้ว' : '🤍 บันทึกทรัพย์นี้'; }
+    else { btn.innerHTML = on ? '❤️' : '🤍'; }
+    if(!on && btn.dataset.removeCard){ var c=btn.closest('[data-fav-card]'); if(c) c.remove(); }
+  })
+  .catch(function(){ btn.disabled=false; });
+};
 </script>
 {% block track %}{% endblock %}
 
@@ -1799,6 +1880,12 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <a href="#" onclick="return shareLine()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#06C755">LINE</a>
     <a href="#" onclick="return shareFb()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#1877F2">Facebook</a>
     <button onclick="copyLink(this)" class="px-3 py-1.5 rounded-lg border text-xs font-medium text-slate-600 hover:bg-slate-50">คัดลอกลิงก์</button>
+    {% if line_login %}
+    <button type="button" onclick="toggleFav(this)" data-sc="{{ r.source_code }}" data-ref="{{ r.external_ref }}"
+      aria-pressed="{{ 'true' if is_fav else 'false' }}"
+      class="ml-auto px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-slate-50"
+      style="border-color:var(--seal);color:var(--seal)">{{ '❤️ บันทึกแล้ว' if is_fav else '🤍 บันทึกทรัพย์นี้' }}</button>
+    {% endif %}
   </div>
 
   {% if r.opening_price %}
@@ -3055,6 +3142,45 @@ loadProps();
 </article>
 {% endblock %}
 """,
+"favorites.html": """
+{% extends "layout.html" %}{% block body %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">❤️ ทรัพย์โปรดของฉัน</h1>
+  <a href="/" class="text-sm brandlink">← ดูทรัพย์ทั้งหมด</a>
+</div>
+{% if not rows %}
+<div class="sheet p-10 text-center text-slate-500 leading-relaxed">
+  ยังไม่มีทรัพย์ที่บันทึกไว้<br>
+  <span class="text-sm">เปิดหน้าทรัพย์ที่สนใจ แล้วกด <b style="color:var(--seal)">🤍 บันทึกทรัพย์นี้</b> ไว้ดูทีหลังได้เลย</span>
+</div>
+{% else %}
+<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+{% for r in rows %}
+<div class="relative" data-fav-card>
+  <a href="/p/{{ r.source_code }}/{{ r.external_ref }}" class="sheet overflow-hidden transition block">
+    <div class="relative imgwrap" style="background:#EEF1F3">
+      <img src="{{ r.images_view[0].url }}" alt="{{ r.title }}" loading="lazy" decoding="async"
+           referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('noimg');this.remove()"
+           class="w-full h-44 object-cover">
+      <span class="absolute top-2.5 left-2.5 seal seal-sm bg-white/95 g-{{ r.grade or 'none' }}"
+            title="{{ r.grade_label }}">{{ r.grade or '—' }}</span>
+    </div>
+    <div class="p-3">
+      <div class="text-lg font-semibold">{{ "{:,.0f}".format(r.opening_price or 0) }}
+        <span class="text-xs font-normal text-slate-500">บาท</span></div>
+      <div class="mt-0.5 text-xs text-slate-600 line-clamp-2">{{ r.title }}</div>
+      {% if r.auction_date %}<div class="mt-1 text-[11px] text-slate-500">ขาย {{ r.auction_date }}</div>{% endif %}
+    </div>
+  </a>
+  <button type="button" onclick="toggleFav(this)" data-sc="{{ r.source_code }}" data-ref="{{ r.external_ref }}"
+    data-label="0" data-remove-card="1" aria-pressed="true" title="เอาออกจากทรัพย์โปรด"
+    class="absolute top-2 right-2 w-9 h-9 rounded-full bg-white/95 shadow flex items-center justify-center text-lg">❤️</button>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+""",
 }
 
 env = Environment(loader=DictLoader(TEMPLATES), autoescape=True)
@@ -3268,12 +3394,19 @@ DEMO_REASON = (
 )
 
 BASE = {"demo": DEMO_MODE, "demo_reason": DEMO_REASON, "public_mode": PUBLIC_MODE,
-        "type_labels": TYPE_LABELS, "severity_style": SEVERITY_STYLE, "ga_id": GA_ID}
+        "type_labels": TYPE_LABELS, "severity_style": SEVERITY_STYLE, "ga_id": GA_ID,
+        "line_login": LINE_LOGIN_ENABLED, "user_logged_in": False, "fav_pairs": set()}
 
 
 def base(**kw) -> dict:
     """ค่าที่ทุกหน้าต้องมี — route ที่ต้องการทับค่าไหนก็ส่งเข้ามา"""
     return {**BASE, "is_admin": False, "admin_token": "", **kw}
+
+
+def ubase(request: "Request", **kw) -> dict:
+    """เหมือน base() แต่เติมสถานะผู้ใช้ LINE (nav login/logout + หัวใจ) ให้อัตโนมัติ"""
+    uid = current_user(request)
+    return base(user_logged_in=bool(uid), **kw)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -3468,14 +3601,16 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
                   "itemListElement": crumbs}
     jsonld = _jsonld([product, breadcrumb])
 
+    uid = current_user(request)
+    is_fav = (source_code, ref) in user_fav_pairs(uid)
     return env.get_template("detail.html").render(
         title=r["title"], r=r, specs=specs,
         comps=comp_blocks[0] if comp_blocks else None,
-        dupes=dupes, dupe_cheapest=dupe_cheapest,
+        dupes=dupes, dupe_cheapest=dupe_cheapest, is_fav=is_fav,
         contact_line_url=current_settings().get("contact_line_url"),
         og_title=og_title, og_desc=og_desc, og_image=og_image, og_type="product",
         og_url=page_url, canonical=page_url, jsonld=jsonld,
-        **base(is_admin=is_admin, admin_token=token))
+        **base(is_admin=is_admin, admin_token=token, user_logged_in=bool(uid)))
 
 
 @app.get("/map", response_class=HTMLResponse)
@@ -3600,6 +3735,8 @@ def robots(request: Request):
         "Allow: /\n"
         "Disallow: /admin\n"
         "Disallow: /api/\n"
+        "Disallow: /auth/\n"
+        "Disallow: /favorites\n"
         f"Sitemap: {base_u}/sitemap.xml\n"
     )
     return PlainTextResponse(body)
@@ -3743,6 +3880,174 @@ def article_page(request: Request, slug: str):
         title=a["title"], a=a, og_title=a["title"], og_desc=a["excerpt"],
         og_type="article", og_url=page_url, canonical=page_url, jsonld=jsonld,
         **base())
+
+
+# ---------------------------------------------------------------------
+# LINE Login (ผู้ใช้ทั่วไป) — OAuth 2.0 + session cookie แยกจาก admin
+# ---------------------------------------------------------------------
+@app.get("/auth/line/login")
+def line_login(request: Request, next: str = Query("/favorites")):
+    import secrets
+    import urllib.parse
+    from fastapi.responses import RedirectResponse
+    if not LINE_LOGIN_ENABLED:
+        raise HTTPException(503, "ยังไม่ได้เปิดใช้ LINE Login (ตั้งค่า env ก่อน)")
+    if not next.startswith("/"):
+        next = "/favorites"
+    state = secrets.token_urlsafe(16)
+    redirect_uri = (BASE_URL or str(request.base_url).rstrip("/")) + "/auth/line/callback"
+    params = {"response_type": "code", "client_id": LINE_LOGIN_CHANNEL_ID,
+              "redirect_uri": redirect_uri, "state": state, "scope": "profile openid"}
+    url = "https://access.line.me/oauth2/v2.1/authorize?" + urllib.parse.urlencode(params)
+    resp = RedirectResponse(url, status_code=303)
+    payload = f"{state}|{next}"
+    resp.set_cookie("npa_oauth", f"{payload}.{_sign(payload)}",
+                    max_age=600, httponly=True, samesite="lax")
+    return resp
+
+
+@app.get("/auth/line/callback")
+def line_callback(request: Request, code: str = Query(""), state: str = Query("")):
+    import hmac
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    from fastapi.responses import RedirectResponse
+    if not LINE_LOGIN_ENABLED:
+        raise HTTPException(503, "ยังไม่ได้เปิดใช้ LINE Login")
+    raw = request.cookies.get("npa_oauth", "")
+    if "." not in raw:
+        raise HTTPException(400, "เซสชันหมดอายุ ลองเข้าสู่ระบบใหม่")
+    payload, sig = raw.rsplit(".", 1)
+    if not hmac.compare_digest(sig, _sign(payload)):
+        raise HTTPException(400, "state ไม่ถูกต้อง (อาจถูกปลอม)")
+    saved_state, _, next_url = payload.partition("|")
+    if not code or not state or state != saved_state:
+        raise HTTPException(400, "ยืนยันตัวตนไม่สำเร็จ ลองใหม่อีกครั้ง")
+    redirect_uri = (BASE_URL or str(request.base_url).rstrip("/")) + "/auth/line/callback"
+    try:
+        data = urllib.parse.urlencode({
+            "grant_type": "authorization_code", "code": code,
+            "redirect_uri": redirect_uri, "client_id": LINE_LOGIN_CHANNEL_ID,
+            "client_secret": LINE_LOGIN_CHANNEL_SECRET}).encode()
+        treq = urllib.request.Request(
+            "https://api.line.me/oauth2/v2.1/token", data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(treq, timeout=10) as r:
+            tok = _json.loads(r.read())
+        access_token = tok.get("access_token")
+        if not access_token:
+            raise ValueError("no access_token")
+        preq = urllib.request.Request(
+            "https://api.line.me/v2/profile",
+            headers={"Authorization": "Bearer " + access_token})
+        with urllib.request.urlopen(preq, timeout=10) as r:
+            prof = _json.loads(r.read())
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("LINE OAuth ล้มเหลว: %s", str(exc)[:150])
+        raise HTTPException(502, "เชื่อมต่อ LINE ไม่สำเร็จ ลองใหม่อีกครั้ง")
+    uid = prof.get("userId")
+    if not uid:
+        raise HTTPException(502, "ไม่ได้ข้อมูลผู้ใช้จาก LINE")
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                conn.execute(
+                    """insert into app_users
+                           (line_user_id, display_name, picture_url, last_login)
+                         values (%s, %s, %s, now())
+                       on conflict (line_user_id) do update set
+                           display_name = excluded.display_name,
+                           picture_url = excluded.picture_url, last_login = now()""",
+                    (uid, prof.get("displayName"), prof.get("pictureUrl")))
+                conn.commit()
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("บันทึกผู้ใช้ LINE ล้มเหลว (รัน migration 037?): %s", str(exc)[:120])
+    resp = RedirectResponse(next_url if next_url.startswith("/") else "/favorites",
+                            status_code=303)
+    resp.set_cookie(USER_COOKIE, make_user_cookie(uid), max_age=30 * 86400,
+                    httponly=True, samesite="lax", secure=True)
+    resp.delete_cookie("npa_oauth")
+    return resp
+
+
+@app.get("/auth/logout")
+def user_logout(request: Request, next: str = Query("/")):
+    from fastapi.responses import RedirectResponse
+    resp = RedirectResponse(next if next.startswith("/") else "/", status_code=303)
+    resp.delete_cookie(USER_COOKIE)
+    return resp
+
+
+# ---------------------------------------------------------------------
+# ทรัพย์โปรด (favorites) — กดหัวใจ (toggle) + หน้ารวมของฉัน
+# ---------------------------------------------------------------------
+@app.post("/api/favorite")
+async def api_favorite(request: Request):
+    from fastapi.responses import JSONResponse
+    uid = current_user(request)
+    if not uid:
+        return JSONResponse({"ok": False, "need_login": True,
+                             "login_url": "/auth/line/login"}, status_code=401)
+    if DEMO_MODE:
+        return JSONResponse({"ok": False, "error": "demo"}, status_code=400)
+    try:
+        data = await request.json()
+    except Exception:                                              # noqa: BLE001
+        data = dict(await request.form())
+    sc = (data.get("source_code") or "").strip()
+    ref = (data.get("external_ref") or "").strip()
+    if not (sc and ref):
+        raise HTTPException(422, "ต้องมี source_code + external_ref")
+    from fastapi.responses import JSONResponse
+    from core.db import connect
+    with connect() as conn:
+        exists = conn.execute(
+            "select 1 from user_favorites "
+            "where line_user_id=%s and source_code=%s and external_ref=%s",
+            (uid, sc, ref)).fetchone()
+        if exists:
+            conn.execute("delete from user_favorites where line_user_id=%s "
+                         "and source_code=%s and external_ref=%s", (uid, sc, ref))
+            fav = False
+        else:
+            conn.execute("insert into user_favorites (line_user_id, source_code, "
+                         "external_ref) values (%s,%s,%s) on conflict do nothing",
+                         (uid, sc, ref))
+            fav = True
+        conn.commit()
+    return JSONResponse({"ok": True, "favorited": fav})
+
+
+@app.get("/favorites", response_class=HTMLResponse)
+def favorites_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    uid = current_user(request)
+    if not uid:
+        return RedirectResponse("/auth/line/login?next=/favorites", status_code=303)
+    settings = current_settings()
+    rows: list = []
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                pairs = [(r["source_code"], r["external_ref"]) for r in conn.execute(
+                    "select source_code, external_ref from user_favorites "
+                    "where line_user_id=%s order by created_at desc limit 100",
+                    (uid,)).fetchall()]
+            for sc, ref in pairs:
+                r = find_row(sc, ref, is_admin=False)
+                if r:
+                    rows.append(r)
+        except Exception as exc:                                   # noqa: BLE001
+            log.warning("โหลดหน้าทรัพย์โปรดไม่สำเร็จ: %s", str(exc)[:120])
+    fav_pairs = {(r["source_code"], r["external_ref"]) for r in rows}
+    return env.get_template("favorites.html").render(
+        title="ทรัพย์โปรดของฉัน", rows=rows,
+        canonical=_abs_url(request, "/favorites"),
+        og_desc="ทรัพย์ NPA/ขายทอดตลาดที่คุณบันทึกไว้บนแปลงดี",
+        **ubase(request, user_logged_in=True, fav_pairs=fav_pairs))
 
 
 # ---------------------------------------------------------------------
