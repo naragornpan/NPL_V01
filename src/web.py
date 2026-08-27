@@ -1658,6 +1658,10 @@ function fbSend(){
      class="chip px-3 py-1.5 text-[13px] font-medium border transition hover:border-slate-400"
      style="{% if i==institution %}background:var(--survey);border-color:var(--survey);color:#fff{% else %}background:#fff;border-color:var(--rule);color:var(--pencil){% endif %}">{{ i }}</a>
   {% endfor %}
+  <span class="mx-1 text-slate-300">|</span>
+  <a href="/market"
+     class="chip px-3 py-1.5 text-[13px] font-medium border transition hover:border-sky-400"
+     style="background:#EEF6FF;border-color:#BEE0F7;color:#1C86C9">🏠 เจ้าของลงเอง →</a>
 </div>
 {% endif %}
 
