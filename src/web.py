@@ -53,7 +53,11 @@ GA_ID = os.environ.get("GA_MEASUREMENT_ID", "").strip()
 LINE_LOGIN_CHANNEL_ID = os.environ.get("LINE_LOGIN_CHANNEL_ID", "").strip()
 LINE_LOGIN_CHANNEL_SECRET = os.environ.get("LINE_LOGIN_CHANNEL_SECRET", "").strip()
 LINE_LOGIN_ENABLED = bool(LINE_LOGIN_CHANNEL_ID and LINE_LOGIN_CHANNEL_SECRET)
-USER_COOKIE = "npa_user"        # cookie session ของผู้ใช้ LINE (แยกจาก admin)
+# Google (Gmail) Login — สร้าง OAuth client ใน Google Cloud Console
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_LOGIN_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+USER_COOKIE = "npa_user"        # cookie session ของผู้ใช้ (LINE/Google) แยกจาก admin
 
 log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
@@ -148,6 +152,34 @@ def user_fav_pairs(uid: str | None) -> set:
     except Exception as exc:                                        # noqa: BLE001
         log.warning("โหลดทรัพย์โปรดไม่สำเร็จ (รัน migration 037?): %s", str(exc)[:100])
         return set()
+
+
+def _finish_login(uid: str, name, pic, next_url: str):
+    """upsert ผู้ใช้ + ตั้ง cookie + redirect — ใช้ร่วมทั้ง LINE และ Google
+    uid เป็นคีย์รวม เช่น 'line:Uxxxx' หรือ 'google:1234' (เก็บใน app_users.line_user_id)
+    """
+    from fastapi.responses import RedirectResponse
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                conn.execute(
+                    """insert into app_users
+                           (line_user_id, display_name, picture_url, last_login)
+                         values (%s, %s, %s, now())
+                       on conflict (line_user_id) do update set
+                           display_name = excluded.display_name,
+                           picture_url = excluded.picture_url, last_login = now()""",
+                    (uid, name, pic))
+                conn.commit()
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("บันทึกผู้ใช้ล้มเหลว (รัน migration 037?): %s", str(exc)[:120])
+    resp = RedirectResponse(next_url if next_url.startswith("/") else "/favorites",
+                            status_code=303)
+    resp.set_cookie(USER_COOKIE, make_user_cookie(uid), max_age=30 * 86400,
+                    httponly=True, samesite="lax", secure=True)
+    resp.delete_cookie("npa_oauth")
+    return resp
 
 
 def _abs_url(request: "Request", path_or_url: str | None) -> str | None:
@@ -1188,12 +1220,12 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/map{{ tk }}" class="navlink whitespace-nowrap">แผนที่</a>
       <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
       <a href="/articles" class="navlink whitespace-nowrap">บทความ</a>
-      {% if line_login %}
+      {% if any_login %}
         {% if user_logged_in %}
         <a href="/favorites" class="navlink whitespace-nowrap">❤️ ทรัพย์โปรด</a>
         <a href="/auth/logout" class="navlink whitespace-nowrap text-slate-400">ออกจากระบบ</a>
         {% else %}
-        <a href="/auth/line/login" class="navlink whitespace-nowrap" style="color:var(--survey)">เข้าสู่ระบบ</a>
+        <a href="/login" class="navlink whitespace-nowrap" style="color:var(--survey)">เข้าสู่ระบบ</a>
         {% endif %}
       {% endif %}
       {% if is_admin %}
@@ -1257,7 +1289,7 @@ window.toggleFav=function(btn){
   fetch('/api/favorite',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({source_code:sc,external_ref:ref})})
   .then(function(r){
-    if(r.status===401){ location.href='/auth/line/login?next='+encodeURIComponent(location.pathname); return null; }
+    if(r.status===401){ location.href='/login?next='+encodeURIComponent(location.pathname); return null; }
     return r.json();
   })
   .then(function(d){
@@ -1880,7 +1912,7 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <a href="#" onclick="return shareLine()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#06C755">LINE</a>
     <a href="#" onclick="return shareFb()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#1877F2">Facebook</a>
     <button onclick="copyLink(this)" class="px-3 py-1.5 rounded-lg border text-xs font-medium text-slate-600 hover:bg-slate-50">คัดลอกลิงก์</button>
-    {% if line_login %}
+    {% if any_login %}
     <button type="button" onclick="toggleFav(this)" data-sc="{{ r.source_code }}" data-ref="{{ r.external_ref }}"
       aria-pressed="{{ 'true' if is_fav else 'false' }}"
       class="ml-auto px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-slate-50"
@@ -3181,6 +3213,38 @@ loadProps();
 {% endif %}
 {% endblock %}
 """,
+"login_user.html": """
+{% extends "layout.html" %}{% block body %}
+<div class="max-w-md mx-auto mt-6">
+  <div class="sheet p-6 sm:p-8 text-center">
+    <div class="text-3xl">❤️</div>
+    <h1 class="text-xl font-semibold mt-2">เข้าสู่ระบบ แปลงดี</h1>
+    <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+      บันทึกทรัพย์โปรด และรับแจ้งเตือนเมื่อราคาลด/ใกล้วันประมูล</p>
+    <div class="mt-6 space-y-3">
+      {% if line_login %}
+      <a href="/auth/line/login?next={{ next_url|urlencode }}"
+         class="flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-white font-medium"
+         style="background:#06C755">เข้าสู่ระบบด้วย LINE</a>
+      {% endif %}
+      {% if google_login %}
+      <a href="/auth/google/login?next={{ next_url|urlencode }}"
+         class="flex items-center justify-center gap-2 rounded-lg px-4 py-3 font-medium border"
+         style="border-color:var(--rule);color:var(--ink)">
+        <span style="color:#4285F4;font-weight:700">G</span> เข้าสู่ระบบด้วย Google</a>
+      {% endif %}
+      {% if not line_login and not google_login %}
+      <div class="text-sm text-slate-500">ยังไม่ได้เปิดใช้การเข้าสู่ระบบ</div>
+      {% endif %}
+    </div>
+    <p class="text-[11px] text-slate-400 mt-6 leading-relaxed">
+      การเข้าสู่ระบบถือว่ายอมรับ
+      <a href="/terms" class="brandlink">เงื่อนไขการใช้งาน</a> และ
+      <a href="/privacy" class="brandlink">นโยบายความเป็นส่วนตัว</a></p>
+  </div>
+</div>
+{% endblock %}
+""",
 }
 
 env = Environment(loader=DictLoader(TEMPLATES), autoescape=True)
@@ -3395,7 +3459,9 @@ DEMO_REASON = (
 
 BASE = {"demo": DEMO_MODE, "demo_reason": DEMO_REASON, "public_mode": PUBLIC_MODE,
         "type_labels": TYPE_LABELS, "severity_style": SEVERITY_STYLE, "ga_id": GA_ID,
-        "line_login": LINE_LOGIN_ENABLED, "user_logged_in": False, "fav_pairs": set()}
+        "line_login": LINE_LOGIN_ENABLED, "google_login": GOOGLE_LOGIN_ENABLED,
+        "any_login": LINE_LOGIN_ENABLED or GOOGLE_LOGIN_ENABLED,
+        "user_logged_in": False, "fav_pairs": set()}
 
 
 def base(**kw) -> dict:
@@ -3736,6 +3802,7 @@ def robots(request: Request):
         "Disallow: /admin\n"
         "Disallow: /api/\n"
         "Disallow: /auth/\n"
+        "Disallow: /login\n"
         "Disallow: /favorites\n"
         f"Sitemap: {base_u}/sitemap.xml\n"
     )
@@ -3946,30 +4013,94 @@ def line_callback(request: Request, code: str = Query(""), state: str = Query(""
     except Exception as exc:                                        # noqa: BLE001
         log.warning("LINE OAuth ล้มเหลว: %s", str(exc)[:150])
         raise HTTPException(502, "เชื่อมต่อ LINE ไม่สำเร็จ ลองใหม่อีกครั้ง")
-    uid = prof.get("userId")
-    if not uid:
+    line_uid = prof.get("userId")
+    if not line_uid:
         raise HTTPException(502, "ไม่ได้ข้อมูลผู้ใช้จาก LINE")
-    if not DEMO_MODE:
-        try:
-            from core.db import connect
-            with connect() as conn:
-                conn.execute(
-                    """insert into app_users
-                           (line_user_id, display_name, picture_url, last_login)
-                         values (%s, %s, %s, now())
-                       on conflict (line_user_id) do update set
-                           display_name = excluded.display_name,
-                           picture_url = excluded.picture_url, last_login = now()""",
-                    (uid, prof.get("displayName"), prof.get("pictureUrl")))
-                conn.commit()
-        except Exception as exc:                                    # noqa: BLE001
-            log.warning("บันทึกผู้ใช้ LINE ล้มเหลว (รัน migration 037?): %s", str(exc)[:120])
-    resp = RedirectResponse(next_url if next_url.startswith("/") else "/favorites",
-                            status_code=303)
-    resp.set_cookie(USER_COOKIE, make_user_cookie(uid), max_age=30 * 86400,
-                    httponly=True, samesite="lax", secure=True)
-    resp.delete_cookie("npa_oauth")
+    return _finish_login("line:" + line_uid, prof.get("displayName"),
+                         prof.get("pictureUrl"), next_url)
+
+
+# ---------------------------------------------------------------------
+# Google (Gmail) Login — OAuth 2.0 (openid + email + profile)
+# ---------------------------------------------------------------------
+@app.get("/auth/google/login")
+def google_login(request: Request, next: str = Query("/favorites")):
+    import secrets
+    import urllib.parse
+    from fastapi.responses import RedirectResponse
+    if not GOOGLE_LOGIN_ENABLED:
+        raise HTTPException(503, "ยังไม่ได้เปิดใช้ Google Login")
+    if not next.startswith("/"):
+        next = "/favorites"
+    state = secrets.token_urlsafe(16)
+    redirect_uri = (BASE_URL or str(request.base_url).rstrip("/")) + "/auth/google/callback"
+    params = {"response_type": "code", "client_id": GOOGLE_CLIENT_ID,
+              "redirect_uri": redirect_uri, "state": state,
+              "scope": "openid email profile", "access_type": "online",
+              "prompt": "select_account"}
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    resp = RedirectResponse(url, status_code=303)
+    payload = f"{state}|{next}"
+    resp.set_cookie("npa_oauth", f"{payload}.{_sign(payload)}",
+                    max_age=600, httponly=True, samesite="lax")
     return resp
+
+
+@app.get("/auth/google/callback")
+def google_callback(request: Request, code: str = Query(""), state: str = Query("")):
+    import hmac
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    if not GOOGLE_LOGIN_ENABLED:
+        raise HTTPException(503, "ยังไม่ได้เปิดใช้ Google Login")
+    raw = request.cookies.get("npa_oauth", "")
+    if "." not in raw:
+        raise HTTPException(400, "เซสชันหมดอายุ ลองเข้าสู่ระบบใหม่")
+    payload, sig = raw.rsplit(".", 1)
+    if not hmac.compare_digest(sig, _sign(payload)):
+        raise HTTPException(400, "state ไม่ถูกต้อง")
+    saved_state, _, next_url = payload.partition("|")
+    if not code or not state or state != saved_state:
+        raise HTTPException(400, "ยืนยันตัวตนไม่สำเร็จ ลองใหม่อีกครั้ง")
+    redirect_uri = (BASE_URL or str(request.base_url).rstrip("/")) + "/auth/google/callback"
+    try:
+        data = urllib.parse.urlencode({
+            "grant_type": "authorization_code", "code": code,
+            "redirect_uri": redirect_uri, "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET}).encode()
+        treq = urllib.request.Request(
+            "https://oauth2.googleapis.com/token", data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(treq, timeout=10) as r:
+            tok = _json.loads(r.read())
+        access_token = tok.get("access_token")
+        if not access_token:
+            raise ValueError("no access_token")
+        ureq = urllib.request.Request(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": "Bearer " + access_token})
+        with urllib.request.urlopen(ureq, timeout=10) as r:
+            info = _json.loads(r.read())
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("Google OAuth ล้มเหลว: %s", str(exc)[:150])
+        raise HTTPException(502, "เชื่อมต่อ Google ไม่สำเร็จ ลองใหม่อีกครั้ง")
+    sub = info.get("sub")
+    if not sub:
+        raise HTTPException(502, "ไม่ได้ข้อมูลผู้ใช้จาก Google")
+    name = info.get("name") or info.get("email")
+    return _finish_login("google:" + sub, name, info.get("picture"), next_url)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def user_login_page(request: Request, next: str = Query("/favorites")):
+    from fastapi.responses import RedirectResponse
+    if current_user(request):
+        return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
+    nxt = next if next.startswith("/") else "/favorites"
+    return env.get_template("login_user.html").render(
+        title="เข้าสู่ระบบ แปลงดี", next_url=nxt, canonical=_abs_url(request, "/login"),
+        og_desc="เข้าสู่ระบบเพื่อบันทึกทรัพย์โปรด และรับแจ้งเตือน", **ubase(request))
 
 
 @app.get("/auth/logout")
@@ -3989,7 +4120,7 @@ async def api_favorite(request: Request):
     uid = current_user(request)
     if not uid:
         return JSONResponse({"ok": False, "need_login": True,
-                             "login_url": "/auth/line/login"}, status_code=401)
+                             "login_url": "/login"}, status_code=401)
     if DEMO_MODE:
         return JSONResponse({"ok": False, "error": "demo"}, status_code=400)
     try:
@@ -4025,7 +4156,7 @@ def favorites_page(request: Request):
     from fastapi.responses import RedirectResponse
     uid = current_user(request)
     if not uid:
-        return RedirectResponse("/auth/line/login?next=/favorites", status_code=303)
+        return RedirectResponse("/login?next=/favorites", status_code=303)
     settings = current_settings()
     rows: list = []
     if not DEMO_MODE:
@@ -4047,7 +4178,7 @@ def favorites_page(request: Request):
         title="ทรัพย์โปรดของฉัน", rows=rows,
         canonical=_abs_url(request, "/favorites"),
         og_desc="ทรัพย์ NPA/ขายทอดตลาดที่คุณบันทึกไว้บนแปลงดี",
-        **ubase(request, user_logged_in=True, fav_pairs=fav_pairs))
+        **ubase(request, fav_pairs=fav_pairs))
 
 
 # ---------------------------------------------------------------------
