@@ -220,6 +220,7 @@ def upload_image_to_storage(data: bytes, content_type: str) -> str | None:
     try:
         req = urllib.request.Request(up_url, data=data, method="POST", headers={
             "Authorization": "Bearer " + SUPABASE_SERVICE_KEY,
+            "apikey": SUPABASE_SERVICE_KEY,          # Supabase gateway ต้องมี header นี้ด้วย
             "Content-Type": content_type, "x-upsert": "true"})
         with urllib.request.urlopen(req, timeout=20) as r:
             if r.status not in (200, 201):
