@@ -1618,6 +1618,7 @@ function fbSend(){
     </div>
     <form class="mt-5 bg-white rounded-xl p-2.5 grid gap-2 sm:grid-cols-[1.3fr_1fr_1fr_auto] items-end shadow-xl">
       {% if admin_token %}<input type="hidden" name="token" value="{{ admin_token }}">{% endif %}
+      {% if src %}<input type="hidden" name="src" value="{{ src }}">{% endif %}
       <label class="text-[11px] text-slate-500 font-medium">จังหวัด
         <select name="province" class="mt-0.5 w-full border rounded-lg px-3 py-2.5 text-sm">
           <option value="">ทุกจังหวัด</option>
@@ -1652,16 +1653,16 @@ function fbSend(){
   <span class="text-[13px] font-medium text-slate-500 mr-0.5">แหล่ง:</span>
   <a href="/{% if admin_token %}?token={{ admin_token }}{% endif %}"
      class="chip px-3 py-1.5 text-[13px] font-medium border transition"
-     style="{% if not institution %}background:var(--survey);border-color:var(--survey);color:#fff{% else %}background:#fff;border-color:var(--rule);color:var(--pencil){% endif %}">ทุกแหล่ง</a>
+     style="{% if not institution and not src %}background:var(--survey);border-color:var(--survey);color:#fff{% else %}background:#fff;border-color:var(--rule);color:var(--pencil){% endif %}">ทุกแหล่ง</a>
   {% for i in institutions %}
   <a href="/?institution={{ i }}{% if admin_token %}&token={{ admin_token }}{% endif %}"
      class="chip px-3 py-1.5 text-[13px] font-medium border transition hover:border-slate-400"
      style="{% if i==institution %}background:var(--survey);border-color:var(--survey);color:#fff{% else %}background:#fff;border-color:var(--rule);color:var(--pencil){% endif %}">{{ i }}</a>
   {% endfor %}
   <span class="mx-1 text-slate-300">|</span>
-  <a href="/market"
+  <a href="/?src=member{% if admin_token %}&token={{ admin_token }}{% endif %}"
      class="chip px-3 py-1.5 text-[13px] font-medium border transition hover:border-sky-400"
-     style="background:#EEF6FF;border-color:#BEE0F7;color:#1C86C9">🏠 เจ้าของลงเอง →</a>
+     style="{% if src=='member' %}background:#1C86C9;border-color:#1C86C9;color:#fff{% else %}background:#EEF6FF;border-color:#BEE0F7;color:#1C86C9{% endif %}">🏠 เจ้าของลงเอง</a>
 </div>
 {% endif %}
 
@@ -1677,6 +1678,7 @@ function fbSend(){
 <div id="filterwrap" class="{{ 'block' if filter_on else 'hidden' }}">
 <form class="sheet p-4 mt-2 grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 items-end">
   {% if admin_token %}<input type="hidden" name="token" value="{{ admin_token }}">{% endif %}
+  {% if src %}<input type="hidden" name="src" value="{{ src }}">{% endif %}
   <label class="text-sm">จังหวัด
     <select name="province" id="f-province" onchange="syncDistricts()"
             class="mt-1 w-full border rounded-lg px-2 py-1.5">
@@ -1781,38 +1783,32 @@ function fbSend(){
 </section>
 {% endif %}
 
-{% if member_rows %}
-<section class="mb-5">
-  <div class="flex items-center gap-2 mb-2">
-    <h2 class="font-semibold">🏠 ประกาศจากเจ้าของ/ผู้ลงเอง</h2>
-    <span class="text-[11px] px-2 py-0.5 rounded-full" style="background:#EEF6FF;color:#1C86C9">ลงเอง · ไม่ใช่ NPA</span>
-    <a href="/market" class="text-xs brandlink ml-auto whitespace-nowrap">ดูตลาดทั้งหมด →</a>
-  </div>
-  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-  {% for r in member_rows %}
-  <a href="/m/{{ r.id }}" class="sheet overflow-hidden block">
-    <div class="relative imgwrap" style="background:#EEF1F3">
-      {% if r.image %}<img src="{{ r.image }}" alt="{{ r.title }}" loading="lazy" class="w-full h-44 object-cover">{% else %}<div class="h-44"></div>{% endif %}
-      <span class="absolute top-2 left-2 text-[11px] px-2 py-1 rounded text-white font-medium" style="background:{{ '#1C86C9' if r.listing_kind=='rent' else 'var(--seal)' }}">{{ 'ให้เช่า' if r.listing_kind=='rent' else 'ขาย' }}</span>
-      <span class="absolute top-2 right-2 text-[11px] px-2 py-1 rounded bg-white/95 font-medium" style="color:#1C86C9">เจ้าของลงเอง</span>
-    </div>
-    <div class="p-3">
-      <div class="text-lg font-semibold">{{ "{:,.0f}".format(r.price or 0) }} <span class="text-xs font-normal text-slate-500">บาท{{ '/เดือน' if r.listing_kind=='rent' else '' }}</span></div>
-      <div class="mt-0.5 text-sm font-medium line-clamp-1">{{ r.title }}</div>
-      <div class="mt-1 text-xs text-slate-500 line-clamp-1">{{ r.type_label }}{% if r.district %} · {{ r.district }}{% endif %}{% if r.province %} {{ r.province }}{% endif %}{% if r.listing_kind=='rent' and r.pets_allowed=='yes' %} · 🐾 เลี้ยงสัตว์ได้{% endif %}</div>
-    </div>
-  </a>
-  {% endfor %}
-  </div>
-</section>
-{% endif %}
-
 {% if not rows %}
 <div class="sheet p-10 text-center text-slate-500">ไม่มีรายการตรงเงื่อนไข</div>
 {% endif %}
 
 <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 {% for r in rows %}
+{% if r.is_member %}
+<a href="/m/{{ r.id }}" class="sheet overflow-hidden transition block">
+  <div class="relative imgwrap" style="background:#EEF1F3">
+    {% if r.image %}<img src="{{ r.image }}" alt="{{ r.title }}" loading="lazy" class="w-full h-48 object-cover">{% else %}<div class="h-48"></div>{% endif %}
+    <span class="absolute top-2.5 left-2.5 text-[11px] px-2 py-1 rounded text-white font-medium" style="background:{{ '#1C86C9' if r.listing_kind=='rent' else 'var(--seal)' }}">{{ 'ให้เช่า' if r.listing_kind=='rent' else 'ขาย' }}</span>
+    <span class="absolute top-2.5 right-2.5 text-[11px] px-2 py-1 rounded bg-white/95 font-medium" style="color:#1C86C9">เจ้าของลงเอง</span>
+  </div>
+  <div class="p-3">
+    <div class="text-xl font-semibold">{{ "{:,.0f}".format(r.price or 0) }} <span class="text-sm font-normal text-slate-500">บาท{{ '/เดือน' if r.listing_kind=='rent' else '' }}</span></div>
+    <div class="mt-1.5 font-medium text-sm line-clamp-2">{{ r.title }}</div>
+    <div class="mt-1 text-xs text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
+      {% if r.usable_area_sqm %}<span>{{ r.usable_area_sqm }} ตร.ม.</span>{% endif %}
+      {% if r.land_area_sqwa %}<span>{{ r.land_area_sqwa }} ตร.ว.</span>{% endif %}
+      {% if r.bedrooms %}<span>{{ r.bedrooms }} นอน</span>{% endif %}
+      {% if r.bathrooms %}<span>{{ r.bathrooms }} น้ำ</span>{% endif %}
+    </div>
+    <div class="mt-1.5 text-xs text-slate-500 line-clamp-1">{{ r.type_label }}{% if r.district %} · {{ r.district }}{% endif %}{% if r.province %} {{ r.province }}{% endif %}{% if r.listing_kind=='rent' and r.pets_allowed=='yes' %} · 🐾 เลี้ยงสัตว์ได้{% endif %}</div>
+  </div>
+</a>
+{% else %}
 <a href="/p/{{ r.source_code }}/{{ r.external_ref }}"
    class="sheet overflow-hidden transition block">
   <div class="relative imgwrap" style="background:#EEF1F3">
@@ -1867,6 +1863,7 @@ function fbSend(){
     {% endif %}
   </div>
 </a>
+{% endif %}
 {% endfor %}
 </div>
 <script>
@@ -4211,7 +4208,8 @@ def index(request: Request, province: str | None = Query(None), district: str | 
           hide_critical: bool = Query(False),
           institution: str | None = Query(None), min_grade: str | None = Query(None),
           show_special: bool = Query(False), page: int = Query(1, ge=1),
-          sort: str = Query(""), near_transit: str = Query(""), token: str = Query("")):
+          sort: str = Query(""), near_transit: str = Query(""), token: str = Query(""),
+          src: str = Query("")):
     # รับเป็นสตริงแล้วแปลงเอง — ฟอร์ม HTML ส่งช่องว่างมาเป็น "" เสมอ
     # ถ้าประกาศเป็น float FastAPI จะปฏิเสธทั้งคำขอด้วย error ที่ผู้ใช้อ่านไม่รู้เรื่อง
     max_price_v = _num(max_price)
@@ -4235,17 +4233,31 @@ def index(request: Request, province: str | None = Query(None), district: str | 
         sort = ""
     order = ORDER_MAP.get(sort)
     is_admin = admin_ok(request, token)
-    rows, total = fetch_rows(
-        province=province, district=district, ptype=ptype, max_price=max_price_v,
-        min_price=min_price_v, hide_critical=hide_critical, institution=institution,
-        min_grade=min_grade, show_special=show_special, is_admin=is_admin,
-        page=page, page_size=PAGE_SIZE, order=order, near_transit=near_transit_v)
+    src = (src or "").strip()
+    if src == "member":
+        # โหมด "เจ้าของลงเอง" — โชว์เฉพาะประกาศสมาชิก (แบ่งหน้า) ตามตัวกรองเดียวกัน
+        rows, total = member_page(province=province, district=district, ptype=ptype,
+                                  min_price=min_price_v, max_price=max_price_v,
+                                  page=page, page_size=PAGE_SIZE)
+    else:
+        rows, total = fetch_rows(
+            province=province, district=district, ptype=ptype, max_price=max_price_v,
+            min_price=min_price_v, hide_critical=hide_critical, institution=institution,
+            min_grade=min_grade, show_special=show_special, is_admin=is_admin,
+            page=page, page_size=PAGE_SIZE, order=order, near_transit=near_transit_v)
+        # ปนประกาศเจ้าของเข้าฟีดหลัก (หน้า 1, มุมมองทั่วไป ไม่เจาะแหล่ง NPA/ตัวกรองเฉพาะ)
+        if page == 1 and not any([institution, near_transit_v, min_grade,
+                                  hide_critical, show_special]):
+            mcards = member_feed_cards(province=province, district=district, ptype=ptype,
+                                       min_price=min_price_v, max_price=max_price_v, limit=6)
+            if mcards:
+                rows = _interleave_member(mcards, rows)
     pages = max(1, -(-total // PAGE_SIZE))
     opts = filter_options(province)
 
     # "ทรัพย์แนะนำ" โชว์เฉพาะหน้าแรกที่ไม่ได้กรองอะไร (หน้าโฮมจริง ๆ)
     featured = []
-    if page == 1 and not any([province, district, ptype, max_price_v, min_price_v,
+    if page == 1 and not src and not any([province, district, ptype, max_price_v, min_price_v,
                               institution, min_grade, hide_critical, show_special,
                               near_transit_v]):
         try:
@@ -4262,7 +4274,7 @@ def index(request: Request, province: str | None = Query(None), district: str | 
 
     # ทรัพย์โปรโมท (rail ขวา บนจอกว้าง) — โชว์บนหน้าแรกที่ไม่ได้กรอง
     promoted = []
-    if page == 1 and not any([province, district, ptype, max_price_v, min_price_v,
+    if page == 1 and not src and not any([province, district, ptype, max_price_v, min_price_v,
                               institution, min_grade, hide_critical, show_special,
                               near_transit_v]):
         try:
@@ -4271,15 +4283,7 @@ def index(request: Request, province: str | None = Query(None), district: str | 
             log.warning("ทรัพย์โปรโมทโหลดไม่สำเร็จ: %s", str(exc)[:100])
             promoted = []
 
-    # ประกาศจากเจ้าของ (สมาชิก) — โชว์รวมบนหน้าแรก/ค้นหา ตามตัวกรองทั่วไป (หน้า 1)
-    member_rows = []
-    if page == 1 and not any([near_transit_v, institution, min_grade,
-                              hide_critical, show_special]):
-        member_rows = member_feed_cards(
-            province=province, district=district, ptype=ptype,
-            min_price=min_price_v, max_price=max_price_v, limit=6)
-
-    qs_parts = {"province": province, "district": district, "ptype": ptype,
+    qs_parts = {"province": province, "district": district, "ptype": ptype, "src": src or None,
                 "max_price": max_price_v, "min_price": min_price_v,
                 "institution": institution, "min_grade": min_grade,
                 "hide_critical": 1 if hide_critical else None,
@@ -4306,8 +4310,8 @@ def index(request: Request, province: str | None = Query(None), district: str | 
 
     return env.get_template("list.html").render(
         title=seo_title, rows=rows, count=total, page=page, pages=pages,
-        canonical=canonical, jsonld=home_jsonld,
-        featured=featured, promoted=promoted, member_rows=member_rows,
+        canonical=canonical, jsonld=home_jsonld, src=src,
+        featured=featured, promoted=promoted,
         maxw="max-w-7xl" if promoted else "max-w-6xl",
         provinces=opts["provinces"], districts=opts["districts"],
         institutions=opts["institutions"], special_count=opts["special_count"],
@@ -5150,6 +5154,57 @@ def member_feed_cards(province=None, district=None, ptype=None,
     except Exception as exc:                                        # noqa: BLE001
         log.warning("member_feed_cards ล้มเหลว (รัน migration 038/041?): %s", str(exc)[:120])
         return []
+
+
+def member_page(province=None, district=None, ptype=None, min_price=None,
+                max_price=None, page=1, page_size=24):
+    """ประกาศสมาชิก (approved+active) แบบแบ่งหน้า — ใช้ตอนกรอง 'เจ้าของลงเอง' ในหน้าแรก"""
+    if DEMO_MODE:
+        return [], 0
+    try:
+        from core.db import connect
+        conds = ["status='approved'", MEMBER_ACTIVE_SQL]
+        params: list = []
+        if province:
+            conds.append("province=%s"); params.append(province)
+        if district:
+            conds.append("district=%s"); params.append(district)
+        if ptype in TYPE_LABELS:
+            conds.append("property_type=%s"); params.append(ptype)
+        if min_price is not None:
+            conds.append("price >= %s"); params.append(min_price)
+        if max_price is not None:
+            conds.append("price <= %s"); params.append(max_price)
+        where = "where " + " and ".join(conds)
+        off = (max(1, page) - 1) * page_size
+        with connect() as conn:
+            total = conn.execute(f"select count(*) as n from member_listings {where}",
+                                 tuple(params)).fetchone()["n"]
+            mrows = conn.execute(
+                f"select * from member_listings {where} "
+                f"order by last_bumped_at desc limit {int(page_size)} offset {int(off)}",
+                tuple(params)).fetchall()
+            cards = _member_cards(mrows, conn)
+        for c in cards:
+            c["is_member"] = True
+        return cards, total
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("member_page ล้มเหลว (รัน migration 038/041?): %s", str(exc)[:120])
+        return [], 0
+
+
+def _interleave_member(members, npa):
+    """สอดการ์ดประกาศเจ้าของแทรกในฟีด NPA (ทุก ๆ 3 ใบ) เพื่อให้ปนกันดูเป็นธรรมชาติ"""
+    for m in members:
+        m["is_member"] = True
+    out: list = []
+    mi = 0
+    for i, r in enumerate(npa):
+        out.append(r)
+        if mi < len(members) and (i + 1) % 3 == 0:
+            out.append(members[mi]); mi += 1
+    out.extend(members[mi:])
+    return out
 
 
 def _annotate_bump(rows):
