@@ -73,6 +73,15 @@ try:
 except ValueError:
     RENO_FREE_LIMIT = 5
 
+# ประกาศสมาชิก: "ยังไม่หมดอายุ" = ถูกดัน/ต่ออายุภายใน N วัน (ไม่ดันเกินให้ซ่อน)
+try:
+    MEMBER_ACTIVE_DAYS = int(os.environ.get("MEMBER_ACTIVE_DAYS", "60"))
+except ValueError:
+    MEMBER_ACTIVE_DAYS = 60
+MEMBER_ACTIVE_SQL = f"last_bumped_at > now() - interval '{MEMBER_ACTIVE_DAYS} days'"
+# อนุญาตให้กด "ดันประกาศ" ได้เมื่อดันล่าสุดเกินกี่ชั่วโมง (กันสแปมดัน)
+MEMBER_BUMP_COOLDOWN_H = 20
+
 log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
 
@@ -1763,6 +1772,32 @@ function fbSend(){
         </div>
       </div>
     </a>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if member_rows %}
+<section class="mb-5">
+  <div class="flex items-center gap-2 mb-2">
+    <h2 class="font-semibold">🏠 ประกาศจากเจ้าของ/ผู้ลงเอง</h2>
+    <span class="text-[11px] px-2 py-0.5 rounded-full" style="background:#EEF6FF;color:#1C86C9">ลงเอง · ไม่ใช่ NPA</span>
+    <a href="/market" class="text-xs brandlink ml-auto whitespace-nowrap">ดูตลาดทั้งหมด →</a>
+  </div>
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {% for r in member_rows %}
+  <a href="/m/{{ r.id }}" class="sheet overflow-hidden block">
+    <div class="relative imgwrap" style="background:#EEF1F3">
+      {% if r.image %}<img src="{{ r.image }}" alt="{{ r.title }}" loading="lazy" class="w-full h-44 object-cover">{% else %}<div class="h-44"></div>{% endif %}
+      <span class="absolute top-2 left-2 text-[11px] px-2 py-1 rounded text-white font-medium" style="background:{{ '#1C86C9' if r.listing_kind=='rent' else 'var(--seal)' }}">{{ 'ให้เช่า' if r.listing_kind=='rent' else 'ขาย' }}</span>
+      <span class="absolute top-2 right-2 text-[11px] px-2 py-1 rounded bg-white/95 font-medium" style="color:#1C86C9">เจ้าของลงเอง</span>
+    </div>
+    <div class="p-3">
+      <div class="text-lg font-semibold">{{ "{:,.0f}".format(r.price or 0) }} <span class="text-xs font-normal text-slate-500">บาท{{ '/เดือน' if r.listing_kind=='rent' else '' }}</span></div>
+      <div class="mt-0.5 text-sm font-medium line-clamp-1">{{ r.title }}</div>
+      <div class="mt-1 text-xs text-slate-500 line-clamp-1">{{ r.type_label }}{% if r.district %} · {{ r.district }}{% endif %}{% if r.province %} {{ r.province }}{% endif %}{% if r.listing_kind=='rent' and r.pets_allowed=='yes' %} · 🐾 เลี้ยงสัตว์ได้{% endif %}</div>
+    </div>
+  </a>
   {% endfor %}
   </div>
 </section>
@@ -3466,6 +3501,15 @@ loadProps();
         <label class="block text-sm">น้ำ<input name="bathrooms" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
         <label class="block text-sm">จอดรถ<input name="parking" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
+      <div id="rentonly" class="hidden">
+        <label class="block text-sm">🐾 การเลี้ยงสัตว์ <span class="text-xs text-slate-400">(สำหรับปล่อยเช่า)</span>
+          <select name="pets_allowed" class="mt-1 w-full border rounded-lg px-2 py-2">
+            <option value="">— ไม่ระบุ —</option>
+            <option value="yes">อนุญาตให้เลี้ยงสัตว์ได้</option>
+            <option value="no">ไม่อนุญาตให้เลี้ยงสัตว์</option>
+            <option value="ask">สอบถามเจ้าของก่อน</option>
+          </select></label>
+      </div>
     </div>
     <div class="sheet p-4 space-y-3">
       <div class="grid grid-cols-3 gap-3">
@@ -3509,9 +3553,10 @@ loadProps();
       <div class="text-sm font-medium">ข้อมูลติดต่อ</div>
       <div class="grid grid-cols-3 gap-3">
         <label class="block text-sm">ชื่อผู้ติดต่อ<input name="contact_name" maxlength="100" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
-        <label class="block text-sm">เบอร์โทร<input name="contact_phone" maxlength="40" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">เบอร์โทร <span class="text-red-500">*</span><input name="contact_phone" required maxlength="40" inputmode="tel" placeholder="08x-xxx-xxxx" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
         <label class="block text-sm">LINE ID<input name="contact_line" maxlength="100" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
+      <p class="text-[11px] text-slate-400">ต้องกรอกเบอร์โทรเพื่อยืนยันตัวตนผู้ลงประกาศ · ประกาศจะแสดงหลังทีมงานตรวจอนุมัติ</p>
     </div>
     <button class="w-full rounded-lg px-4 py-3 text-white font-medium" style="background:var(--survey)">ส่งประกาศเพื่อรออนุมัติ</button>
     <p class="text-[11px] text-slate-400 text-center">การลงประกาศถือว่ายอมรับ <a href="/terms" class="brandlink">เงื่อนไข</a> — ห้ามประกาศเท็จ/หลอกลวง</p>
@@ -3567,6 +3612,21 @@ loadProps();
 })();
 </script>
 <script>
+// โชว์ช่อง "เลี้ยงสัตว์" เฉพาะเมื่อเลือกให้เช่า + ปรับ label ราคา
+(function(){
+  var rentonly=document.getElementById('rentonly'), pl=document.getElementById('pricelbl');
+  function sync(){
+    var k=document.querySelector('input[name="listing_kind"]:checked');
+    var rent = k && k.value==='rent';
+    if(rentonly) rentonly.classList.toggle('hidden', !rent);
+    if(pl) pl.firstChild.nodeValue = rent ? 'ค่าเช่า/เดือน (บาท)' : 'ราคา (บาท)';
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="listing_kind"]'),
+    function(r){ r.addEventListener('change', sync); });
+  sync();
+})();
+</script>
+<script>
 // จังหวัด → อำเภอ → ตำบล : dropdown เชื่อมโยงกัน (โหลดข้อมูลทางการครั้งเดียว)
 (function(){
   var prov=document.getElementById('sd-prov'),
@@ -3608,24 +3668,34 @@ loadProps();
     <p class="text-white/80 text-sm mt-1">ประกาศขาย/ให้เช่าจากเจ้าของและนายหน้าโดยตรง · <a href="/sell" class="underline">ลงประกาศฟรี →</a></p>
   </div>
 </section>
-<form class="mb-4 flex flex-wrap gap-2 items-end text-sm">
-  <label>ประเภทประกาศ
-    <select name="kind" class="ml-1 border rounded-lg px-2 py-1.5">
+<form class="sheet p-3 mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6 items-end text-sm">
+  <label class="block">ประเภทประกาศ
+    <select name="kind" class="mt-1 w-full border rounded-lg px-2 py-1.5 bg-white">
       <option value="">ทั้งหมด</option>
       <option value="sale" {% if kind=='sale' %}selected{% endif %}>ขาย</option>
       <option value="rent" {% if kind=='rent' %}selected{% endif %}>ให้เช่า</option>
     </select></label>
-  <label>ประเภททรัพย์
-    <select name="ptype" class="ml-1 border rounded-lg px-2 py-1.5">
+  <label class="block">ประเภททรัพย์
+    <select name="ptype" class="mt-1 w-full border rounded-lg px-2 py-1.5 bg-white">
       <option value="">ทั้งหมด</option>
       {% for k,v in type_labels.items() %}<option value="{{ k }}" {% if k==ptype %}selected{% endif %}>{{ v }}</option>{% endfor %}
     </select></label>
-  <label>จังหวัด
-    <select name="province" class="ml-1 border rounded-lg px-2 py-1.5">
+  <label class="block">จังหวัด
+    <select name="province" id="mk-prov" data-cur="{{ province }}" class="mt-1 w-full border rounded-lg px-2 py-1.5 bg-white">
       <option value="">ทั้งหมด</option>
-      {% for p in provinces %}<option value="{{ p }}" {% if p==province %}selected{% endif %}>{{ p }}</option>{% endfor %}
     </select></label>
-  <button class="bg-slate-900 text-white rounded-lg px-4 py-1.5">กรอง</button>
+  <label class="block">อำเภอ/เขต
+    <select name="district" id="mk-dist" data-cur="{{ district }}" class="mt-1 w-full border rounded-lg px-2 py-1.5 bg-white">
+      <option value="">ทั้งหมด</option>
+    </select></label>
+  <label class="block">ราคาต่ำสุด
+    <input name="min_price" type="number" value="{{ min_price|int if min_price else '' }}" placeholder="0" class="mt-1 w-full border rounded-lg px-2 py-1.5"></label>
+  <label class="block">ราคาสูงสุด
+    <input name="max_price" type="number" value="{{ max_price|int if max_price else '' }}" placeholder="ไม่จำกัด" class="mt-1 w-full border rounded-lg px-2 py-1.5"></label>
+  <div class="sm:col-span-2 lg:col-span-6 flex gap-2">
+    <button class="bg-slate-900 text-white rounded-lg px-5 py-1.5">กรอง</button>
+    <a href="/market" class="border rounded-lg px-4 py-1.5">ล้างตัวกรอง</a>
+  </div>
 </form>
 <div class="flex items-center justify-between mb-3">
   <h2 class="font-semibold">พบ <span class="num">{{ "{:,}".format(count) }}</span> ประกาศ</h2>
@@ -3653,6 +3723,22 @@ loadProps();
 {% endfor %}
 </div>
 {% endif %}
+<script>
+// ตัวกรอง จังหวัด → อำเภอ (ข้อมูลทางการ) พร้อมคงค่าที่เลือกไว้
+(function(){
+  var prov=document.getElementById('mk-prov'), dist=document.getElementById('mk-dist');
+  if(!prov||!dist) return;
+  var curP=prov.getAttribute('data-cur')||'', curD=dist.getAttribute('data-cur')||'';
+  function fill(sel,list,cur){ sel.innerHTML='<option value="">ทั้งหมด</option>';
+    list.forEach(function(v){var o=document.createElement('option');o.value=v;o.textContent=v;if(v===cur)o.selected=true;sel.appendChild(o);}); }
+  fetch('/api/th-geo.json').then(function(r){return r.json();}).then(function(GEO){
+    fill(prov, Object.keys(GEO).sort(), curP);
+    fill(dist, (curP&&GEO[curP])?Object.keys(GEO[curP]):[], curD);
+    prov.addEventListener('change', function(){
+      fill(dist, (prov.value&&GEO[prov.value])?Object.keys(GEO[prov.value]):[], ''); });
+  }).catch(function(){});
+})();
+</script>
 {% endblock %}
 """,
 "member_detail.html": """
@@ -3685,6 +3771,7 @@ loadProps();
         {% if d.bedrooms %}<span>{{ d.bedrooms }} นอน</span>{% endif %}
         {% if d.bathrooms %}<span>{{ d.bathrooms }} น้ำ</span>{% endif %}
         {% if d.parking %}<span>จอด {{ d.parking }}</span>{% endif %}
+        {% if d.listing_kind=='rent' and d.pets_allowed %}<span class="px-2 rounded" style="background:#EEF6FF;color:#1C86C9">🐾 {{ {'yes':'เลี้ยงสัตว์ได้','no':'ห้ามเลี้ยงสัตว์','ask':'สอบถามเรื่องสัตว์เลี้ยง'}[d.pets_allowed] }}</span>{% endif %}
       </div>
       {% if d.province or d.district %}<div class="mt-2 text-sm text-slate-600">📍 {{ d.subdistrict }} {{ d.district }} {{ d.province }}{% if d.address_raw %} · {{ d.address_raw }}{% endif %}</div>{% endif %}
       {% if d.description %}<div class="mt-4 text-[15px] leading-relaxed text-slate-700 whitespace-pre-line">{{ d.description }}</div>{% endif %}
@@ -3803,22 +3890,47 @@ window.doRenovate=function(lid){
 {% else %}
 <div class="space-y-3">
 {% for r in rows %}
-<a href="/m/{{ r.id }}" class="sheet p-3 flex gap-3 items-center block">
-  <div class="w-20 h-20 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden">
-    {% if r.image %}<img src="{{ r.image }}" class="w-full h-full object-cover">{% endif %}</div>
-  <div class="min-w-0 flex-1">
-    <div class="font-medium line-clamp-1">{{ r.title }}</div>
-    <div class="text-sm text-slate-500">{{ "{:,.0f}".format(r.price or 0) }} บาท{{ '/เดือน' if r.listing_kind=='rent' else '' }} · {{ 'ให้เช่า' if r.listing_kind=='rent' else 'ขาย' }}</div>
-    <div class="text-xs text-slate-400 mt-0.5">👁 {{ "{:,}".format(r.views_30d or 0) }} วิว / 30 วัน</div>
+<div class="sheet p-3">
+  <div class="flex gap-3 items-center">
+    <a href="/m/{{ r.id }}" class="w-20 h-20 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden block">
+      {% if r.image %}<img src="{{ r.image }}" class="w-full h-full object-cover">{% endif %}</a>
+    <a href="/m/{{ r.id }}" class="min-w-0 flex-1 block">
+      <div class="font-medium line-clamp-1">{{ r.title }}</div>
+      <div class="text-sm text-slate-500">{{ "{:,.0f}".format(r.price or 0) }} บาท{{ '/เดือน' if r.listing_kind=='rent' else '' }} · {{ 'ให้เช่า' if r.listing_kind=='rent' else 'ขาย' }}</div>
+      <div class="text-xs text-slate-400 mt-0.5">👁 {{ "{:,}".format(r.views_30d or 0) }} วิว / 30 วัน</div>
+    </a>
+    <div class="flex flex-col items-end gap-1 flex-shrink-0">
+      <span class="text-[11px] px-2 py-1 rounded font-medium
+        {% if r.status=='approved' and r.expired %}bg-slate-200 text-slate-600{% elif r.status=='approved' %}bg-emerald-100 text-emerald-800{% elif r.status=='rejected' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-800{% endif %}">
+        {% if r.status=='approved' and r.expired %}หมดอายุ{% elif r.status=='approved' %}เผยแพร่แล้ว{% elif r.status=='rejected' %}ไม่ผ่าน{% else %}รออนุมัติ{% endif %}</span>
+      {% if r.status=='approved' and not r.expired and r.days_left is not none %}<span class="text-[11px] text-slate-400">เหลือ {{ r.days_left }} วัน</span>{% endif %}
+    </div>
   </div>
-  <span class="text-[11px] px-2 py-1 rounded font-medium
-    {% if r.status=='approved' %}bg-emerald-100 text-emerald-800{% elif r.status=='rejected' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-800{% endif %}">
-    {% if r.status=='approved' %}เผยแพร่แล้ว{% elif r.status=='rejected' %}ไม่ผ่าน{% else %}รออนุมัติ{% endif %}</span>
-</a>
-{% if r.status=='rejected' and r.reject_reason %}<div class="text-xs text-red-600 -mt-1 ml-1">เหตุผล: {{ r.reject_reason }}</div>{% endif %}
+  {% if r.status=='approved' %}
+  <div class="mt-2 flex items-center gap-2">
+    <button type="button" onclick="bumpListing('{{ r.id }}', this)" {% if not r.can_bump %}disabled{% endif %}
+      class="text-xs rounded-lg px-3 py-1.5 text-white" style="background:var(--survey);{% if not r.can_bump %}opacity:.4;pointer-events:none{% endif %}">
+      {% if r.expired %}🔄 ต่ออายุประกาศ{% else %}⬆️ ดันประกาศขึ้นบนสุด{% endif %}</button>
+    {% if not r.can_bump %}<span class="text-[11px] text-slate-400">ดันได้อีกครั้งในวันพรุ่งนี้</span>
+    {% elif r.expired %}<span class="text-[11px] text-red-500">กดเพื่อกลับมาแสดงบนเว็บอีกครั้ง</span>{% endif %}
+  </div>
+  {% endif %}
+  {% if r.status=='rejected' and r.reject_reason %}<div class="text-xs text-red-600 mt-1">เหตุผล: {{ r.reject_reason }}</div>{% endif %}
+</div>
 {% endfor %}
 </div>
 {% endif %}
+<script>
+function bumpListing(id, btn){
+  btn.disabled=true; var old=btn.textContent; btn.textContent='กำลังดัน…';
+  fetch('/api/bump/'+id,{method:'POST'})
+    .then(function(r){ if(r.status===401){location.href='/login?next=/my-listings';return null;} return r.json(); })
+    .then(function(d){ if(!d)return;
+      if(d.ok){ location.reload(); }
+      else { btn.textContent=old; btn.disabled=false; alert(d.message||'ดันประกาศไม่สำเร็จ'); } })
+    .catch(function(){ btn.textContent=old; btn.disabled=false; alert('ดันประกาศไม่สำเร็จ'); });
+}
+</script>
 {% endblock %}
 """,
 "admin_market.html": """
@@ -4155,6 +4267,14 @@ def index(request: Request, province: str | None = Query(None), district: str | 
             log.warning("ทรัพย์โปรโมทโหลดไม่สำเร็จ: %s", str(exc)[:100])
             promoted = []
 
+    # ประกาศจากเจ้าของ (สมาชิก) — โชว์รวมบนหน้าแรก/ค้นหา ตามตัวกรองทั่วไป (หน้า 1)
+    member_rows = []
+    if page == 1 and not any([near_transit_v, institution, min_grade,
+                              hide_critical, show_special]):
+        member_rows = member_feed_cards(
+            province=province, district=district, ptype=ptype,
+            min_price=min_price_v, max_price=max_price_v, limit=6)
+
     qs_parts = {"province": province, "district": district, "ptype": ptype,
                 "max_price": max_price_v, "min_price": min_price_v,
                 "institution": institution, "min_grade": min_grade,
@@ -4183,7 +4303,7 @@ def index(request: Request, province: str | None = Query(None), district: str | 
     return env.get_template("list.html").render(
         title=seo_title, rows=rows, count=total, page=page, pages=pages,
         canonical=canonical, jsonld=home_jsonld,
-        featured=featured, promoted=promoted,
+        featured=featured, promoted=promoted, member_rows=member_rows,
         maxw="max-w-7xl" if promoted else "max-w-6xl",
         provinces=opts["provinces"], districts=opts["districts"],
         institutions=opts["institutions"], special_count=opts["special_count"],
@@ -4462,8 +4582,8 @@ def sitemap(request: Request):
             with connect() as conn:
                 for r in conn.execute(
                         "select id, updated_at::date as lastmod from member_listings "
-                        "where status='approved' order by created_at desc "
-                        "limit 5000").fetchall():
+                        f"where status='approved' and {MEMBER_ACTIVE_SQL} "
+                        "order by last_bumped_at desc limit 5000").fetchall():
                     urls.append((f"{base_u}/m/{r['id']}", r["lastmod"], "weekly", "0.6"))
         except Exception as exc:                                   # noqa: BLE001
             log.warning("sitemap market ล้มเหลว: %s", str(exc)[:100])
@@ -4996,6 +5116,56 @@ def _member_cards(mrows, conn):
     return out
 
 
+def member_feed_cards(province=None, district=None, ptype=None,
+                      min_price=None, max_price=None, kind=None, limit=6):
+    """ประกาศสมาชิก (approved + ยังไม่หมดอายุ) ที่ตรงตัวกรอง — ไปโชว์รวมในหน้าแรก/ค้นหา"""
+    if DEMO_MODE:
+        return []
+    try:
+        from core.db import connect
+        conds = ["status='approved'", MEMBER_ACTIVE_SQL]
+        params: list = []
+        if kind in ("sale", "rent"):
+            conds.append("listing_kind=%s"); params.append(kind)
+        if province:
+            conds.append("province=%s"); params.append(province)
+        if district:
+            conds.append("district=%s"); params.append(district)
+        if ptype in TYPE_LABELS:
+            conds.append("property_type=%s"); params.append(ptype)
+        if min_price is not None:
+            conds.append("price >= %s"); params.append(min_price)
+        if max_price is not None:
+            conds.append("price <= %s"); params.append(max_price)
+        where = "where " + " and ".join(conds)
+        with connect() as conn:
+            mrows = conn.execute(
+                f"select * from member_listings {where} "
+                f"order by last_bumped_at desc limit {int(limit)}", tuple(params)).fetchall()
+            return _member_cards(mrows, conn)
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("member_feed_cards ล้มเหลว (รัน migration 038/041?): %s", str(exc)[:120])
+        return []
+
+
+def _annotate_bump(rows):
+    """เติมสถานะ หมดอายุ/เหลือกี่วัน/ดันได้ไหม ให้ประกาศสมาชิก (หน้า my-listings)"""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        lb = r.get("last_bumped_at")
+        if lb is None:
+            r["expired"] = False; r["days_left"] = None; r["can_bump"] = True
+            continue
+        if lb.tzinfo is None:
+            lb = lb.replace(tzinfo=timezone.utc)
+        age_h = (now - lb).total_seconds() / 3600.0
+        age_d = age_h / 24.0
+        r["expired"] = age_d > MEMBER_ACTIVE_DAYS
+        r["days_left"] = max(0, int(round(MEMBER_ACTIVE_DAYS - age_d)))
+        r["can_bump"] = age_h >= MEMBER_BUMP_COOLDOWN_H
+
+
 @app.get("/sell", response_class=HTMLResponse)
 def sell_form(request: Request):
     from fastapi.responses import RedirectResponse
@@ -5019,8 +5189,12 @@ async def sell_submit(request: Request):
     title = (f.get("title") or "").strip()[:200]
     if not title:
         raise HTTPException(422, "ต้องกรอกชื่อประกาศ")
+    phone = (f.get("contact_phone") or "").strip()[:40]
+    if sum(ch.isdigit() for ch in phone) < 9:
+        raise HTTPException(422, "ต้องกรอกเบอร์โทรที่ติดต่อได้ (อย่างน้อย 9 หลัก)")
     kind = f.get("listing_kind") if f.get("listing_kind") in ("sale", "rent") else "sale"
     ptype = f.get("property_type") if f.get("property_type") in TYPE_LABELS else None
+    pets = f.get("pets_allowed") if f.get("pets_allowed") in ("yes", "no", "ask") else None
     images = [u.strip() for u in (f.get("image_urls") or "").split(",") if u.strip()][:12]
     fields = {
         "posted_by": uid, "listing_kind": kind, "property_type": ptype, "title": title,
@@ -5035,8 +5209,9 @@ async def sell_submit(request: Request):
         "usable_area_sqm": _num(f.get("usable_area_sqm") or ""),
         "bedrooms": _int(f.get("bedrooms")), "bathrooms": _int(f.get("bathrooms")),
         "parking": _int(f.get("parking")),
+        "pets_allowed": pets if kind == "rent" else None,
         "contact_name": (f.get("contact_name") or "").strip()[:100] or None,
-        "contact_phone": (f.get("contact_phone") or "").strip()[:40] or None,
+        "contact_phone": phone or None,
         "contact_line": (f.get("contact_line") or "").strip()[:100] or None,
     }
     from core.db import connect
@@ -5055,21 +5230,31 @@ async def sell_submit(request: Request):
 
 @app.get("/market", response_class=HTMLResponse)
 def market(request: Request, kind: str = Query(""), province: str = Query(""),
-           ptype: str = Query(""), page: int = Query(1, ge=1)):
+           district: str = Query(""), ptype: str = Query(""),
+           min_price: str = Query(""), max_price: str = Query(""),
+           page: int = Query(1, ge=1)):
     rows: list = []
     total = 0
     provinces: list = []
+    min_price_v = _num(min_price)
+    max_price_v = _num(max_price)
     if not DEMO_MODE:
         try:
             from core.db import connect
-            conds = ["status = 'approved'"]
+            conds = ["status = 'approved'", MEMBER_ACTIVE_SQL]
             params: list = []
             if kind in ("sale", "rent"):
                 conds.append("listing_kind = %s"); params.append(kind)
             if province:
                 conds.append("province = %s"); params.append(province)
+            if district:
+                conds.append("district = %s"); params.append(district)
             if ptype in TYPE_LABELS:
                 conds.append("property_type = %s"); params.append(ptype)
+            if min_price_v is not None:
+                conds.append("price >= %s"); params.append(min_price_v)
+            if max_price_v is not None:
+                conds.append("price <= %s"); params.append(max_price_v)
             where = "where " + " and ".join(conds)
             ps = 24
             off = (page - 1) * ps
@@ -5079,7 +5264,7 @@ def market(request: Request, kind: str = Query(""), province: str = Query(""),
                     tuple(params)).fetchone()["n"]
                 mrows = conn.execute(
                     f"select * from member_listings {where} "
-                    f"order by created_at desc limit {ps} offset {off}",
+                    f"order by last_bumped_at desc limit {ps} offset {off}",
                     tuple(params)).fetchall()
                 rows = _member_cards(mrows, conn)
                 provinces = [r["province"] for r in conn.execute(
@@ -5087,11 +5272,12 @@ def market(request: Request, kind: str = Query(""), province: str = Query(""),
                     "where status='approved' and province is not null "
                     "order by province").fetchall()]
         except Exception as exc:                                    # noqa: BLE001
-            log.warning("market โหลดไม่สำเร็จ (รัน migration 038?): %s", str(exc)[:120])
+            log.warning("market โหลดไม่สำเร็จ (รัน migration 038/041?): %s", str(exc)[:120])
     pages = max(1, -(-total // 24))
     return env.get_template("market.html").render(
         title="ตลาดซื้อ-ขาย-เช่า อสังหาฯ (ประกาศจากผู้ลงเอง)", rows=rows, count=total,
-        page=page, pages=pages, kind=kind, province=province, ptype=ptype,
+        page=page, pages=pages, kind=kind, province=province, district=district,
+        ptype=ptype, min_price=min_price_v, max_price=max_price_v,
         provinces=provinces, canonical=_abs_url(request, "/market"),
         og_desc="ประกาศขาย/ให้เช่าบ้าน ที่ดิน คอนโด จากผู้ลงประกาศโดยตรงบนแปลงดี",
         **ubase(request))
@@ -5105,7 +5291,8 @@ def market_geojson(request: Request, kind: str = Query("")):
     if not DEMO_MODE:
         try:
             from core.db import connect
-            conds = ["status='approved'", "lat is not null", "lng is not null"]
+            conds = ["status='approved'", MEMBER_ACTIVE_SQL,
+                     "lat is not null", "lng is not null"]
             params: list = []
             if kind in ("sale", "rent"):
                 conds.append("listing_kind=%s"); params.append(kind)
@@ -5196,12 +5383,52 @@ def my_listings(request: Request, posted: str = Query("")):
                         "group by listing_id", (ids,)).fetchall()}
                     for r in rows:
                         r["views_30d"] = vmap.get(r["id"], 0)
+                _annotate_bump(rows)
         except Exception as exc:                                    # noqa: BLE001
             log.warning("my-listings ล้มเหลว: %s", str(exc)[:120])
     return env.get_template("my_listings.html").render(
         title="ประกาศของฉัน", rows=rows, just_posted=bool(posted),
         canonical=_abs_url(request, "/my-listings"),
         og_desc="ประกาศขาย/เช่าของฉันบนแปลงดี", **ubase(request))
+
+
+@app.post("/api/bump/{lid}")
+async def api_bump(request: Request, lid: str):
+    """ดันประกาศ/ต่ออายุ — เจ้าของเท่านั้น · เว้นระยะ MEMBER_BUMP_COOLDOWN_H ชม."""
+    from fastapi.responses import JSONResponse
+    uid = current_user(request)
+    if not uid:
+        return JSONResponse({"ok": False, "need_login": True}, status_code=401)
+    if DEMO_MODE:
+        return JSONResponse({"ok": False, "message": "โหมดตัวอย่าง"}, status_code=400)
+    try:
+        from datetime import datetime, timezone
+        from core.db import connect
+        with connect() as conn:
+            row = conn.execute(
+                "select posted_by, status, last_bumped_at from member_listings where id=%s",
+                (lid,)).fetchone()
+            if not row or row["posted_by"] != uid:
+                return JSONResponse({"ok": False, "message": "ไม่พบประกาศ หรือไม่ใช่ของคุณ"},
+                                    status_code=404)
+            if row["status"] != "approved":
+                return JSONResponse({"ok": False, "message": "ดันได้เฉพาะประกาศที่อนุมัติแล้ว"},
+                                    status_code=400)
+            lb = row["last_bumped_at"]
+            if lb is not None:
+                if lb.tzinfo is None:
+                    lb = lb.replace(tzinfo=timezone.utc)
+                age_h = (datetime.now(timezone.utc) - lb).total_seconds() / 3600.0
+                if age_h < MEMBER_BUMP_COOLDOWN_H:
+                    return JSONResponse({"ok": False, "message": "เพิ่งดันไปแล้ว ลองใหม่วันพรุ่งนี้"},
+                                        status_code=429)
+            conn.execute("update member_listings set last_bumped_at=now(), updated_at=now() "
+                         "where id=%s", (lid,))
+            conn.commit()
+        return JSONResponse({"ok": True})
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("bump ล้มเหลว: %s", str(exc)[:120])
+        return JSONResponse({"ok": False, "message": "ดันประกาศไม่สำเร็จ"}, status_code=500)
 
 
 @app.get("/admin/market", response_class=HTMLResponse)
