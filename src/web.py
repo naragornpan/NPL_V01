@@ -63,6 +63,15 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
 SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "listings").strip()
 STORAGE_ENABLED = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
+# AI Renovate (Gemini image) — สร้างภาพจำลองรีโนเวท before/after
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_IMAGE_MODEL = os.environ.get("GEMINI_IMAGE_MODEL",
+                                    "gemini-2.5-flash-image-preview").strip()
+RENOVATE_ENABLED = bool(GEMINI_API_KEY and STORAGE_ENABLED)
+try:
+    RENO_FREE_LIMIT = int(os.environ.get("RENO_FREE_LIMIT", "5"))
+except ValueError:
+    RENO_FREE_LIMIT = 5
 
 log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
@@ -212,6 +221,90 @@ def upload_image_to_storage(data: bytes, content_type: str) -> str | None:
         log.warning("อัปโหลดรูปขึ้น Storage ล้มเหลว: %s", str(exc)[:150])
         return None
     return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
+
+
+# AI Renovate — สไตล์ + prompt (คงโครงสร้างห้อง เปลี่ยนแค่ผิว/เฟอร์ฯ ไม่ over)
+RENO_STYLES = {
+    "clean": ("รีโนเวทสะอาดตา (ใกล้เดิม)", "a clean, freshly renovated version"),
+    "modern": ("โมเดิร์น มินิมอล", "a modern minimalist style renovation"),
+    "warm": ("โทนอบอุ่น ไม้ธรรมชาติ", "a warm cozy renovation with natural wood tones"),
+    "muji": ("ญี่ปุ่น/มูจิ", "a Japanese Muji-style minimalist renovation"),
+}
+
+
+def _reno_prompt(style_en: str) -> str:
+    return (
+        "Renovate this real-estate room photo into " + style_en + ". "
+        "CRITICAL RULES: keep the EXACT same room layout, wall positions, windows, doors, "
+        "ceiling height, and camera viewpoint — do not move or remove structural elements. "
+        "Only refresh finishes: wall paint, flooring, lighting, and add tasteful, realistic "
+        "furniture and decor. Photorealistic, natural daylight, clean and believable as a real "
+        "renovation of the SAME room. Do NOT exaggerate or add luxury elements that would "
+        "misrepresent the property.")
+
+
+def _fetch_image_bytes(url: str, max_bytes: int = 8 * 1024 * 1024):
+    """โหลดรูปจาก URL (ฝั่งเซิร์ฟเวอร์) → (bytes, mime) หรือ (None, None)"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=25) as r:
+            data = r.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                return None, None
+            mime = (r.headers.get("Content-Type", "image/jpeg") or "image/jpeg").split(";")[0].strip()
+            return data, mime
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("โหลดรูปต้นทางไม่สำเร็จ: %s", str(exc)[:120])
+        return None, None
+
+
+def gemini_renovate(img_bytes: bytes, mime: str, style_en: str):
+    """เรียก Gemini image → (result_bytes, out_mime) หรือ None"""
+    if not GEMINI_API_KEY:
+        return None
+    import base64
+    import json as _json
+    import urllib.request
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_IMAGE_MODEL}:generateContent?key={GEMINI_API_KEY}")
+    if mime not in _IMG_EXT:
+        mime = "image/jpeg"
+    body = {"contents": [{"parts": [
+        {"text": _reno_prompt(style_en)},
+        {"inline_data": {"mime_type": mime,
+                         "data": base64.b64encode(img_bytes).decode()}}]}],
+        "generationConfig": {"responseModalities": ["IMAGE"]}}
+    try:
+        req = urllib.request.Request(
+            url, data=_json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            resp = _json.loads(r.read())
+        for cand in resp.get("candidates", []):
+            for part in cand.get("content", {}).get("parts", []):
+                idata = part.get("inlineData") or part.get("inline_data")
+                if idata and idata.get("data"):
+                    out_mime = (idata.get("mimeType") or idata.get("mime_type")
+                                or "image/png")
+                    return base64.b64decode(idata["data"]), out_mime
+        log.warning("Gemini ไม่คืนรูป: %s", str(resp)[:200])
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("Gemini renovate ล้มเหลว: %s", str(exc)[:200])
+    return None
+
+
+def _reno_used(uid: str) -> int:
+    """จำนวนรูปที่ผู้ใช้เคยรีโนเวท (นับ quota ฟรี)"""
+    if not uid or DEMO_MODE:
+        return 0
+    try:
+        from core.db import connect
+        with connect() as conn:
+            return conn.execute(
+                "select count(*) as n from member_renovations where created_by=%s",
+                (uid,)).fetchone()["n"]
+    except Exception:                                              # noqa: BLE001
+        return 0
 
 
 def _abs_url(request: "Request", path_or_url: str | None) -> str | None:
@@ -3529,6 +3622,52 @@ loadProps();
       {% if d.description %}<div class="mt-4 text-[15px] leading-relaxed text-slate-700 whitespace-pre-line">{{ d.description }}</div>{% endif %}
     </div>
   </div>
+  {% if d.renovations %}
+  <div class="sheet p-4 mt-4">
+    <h2 class="font-semibold text-sm">ภาพจำลองรีโนเวท (AI)
+      <span class="text-[11px] font-normal text-amber-600">— ภาพจำลองเพื่อดูไอเดีย ไม่ใช่สภาพจริง</span></h2>
+    <div class="mt-3 space-y-4">
+      {% for r in d.renovations %}
+      <div>
+        <div class="ba" style="position:relative;user-select:none;line-height:0;border-radius:8px;overflow:hidden">
+          <img class="ba-before" src="{{ r.source_url }}" style="width:100%;display:block">
+          <div class="ba-aw" style="position:absolute;top:0;left:0;height:100%;width:50%;overflow:hidden">
+            <img class="ba-after" src="{{ r.result_url }}" style="height:100%;display:block;max-width:none">
+          </div>
+          <div class="ba-line" style="position:absolute;top:0;bottom:0;left:50%;width:2px;background:#fff;box-shadow:0 0 4px rgba(0,0,0,.5)"></div>
+          <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:1px 6px;border-radius:4px">ก่อน</span>
+          <span style="position:absolute;top:6px;right:6px;background:rgba(226,70,55,.9);color:#fff;font-size:10px;padding:1px 6px;border-radius:4px">หลัง · จำลอง AI</span>
+          <input type="range" min="0" max="100" value="50" oninput="baMove(this)"
+            style="position:absolute;bottom:8px;left:5%;width:90%">
+        </div>
+        <div class="text-[11px] text-slate-400 mt-1">เลื่อนแถบเทียบก่อน/หลัง{% if r.style and reno_styles.get(r.style) %} · สไตล์ {{ reno_styles.get(r.style)[0] }}{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  {% if can_renovate %}
+  <div class="sheet p-4 mt-4">
+    <h2 class="font-semibold text-sm">🎨 รีโนเวทด้วย AI <span class="text-[11px] font-normal text-slate-400">(ภาพจำลอง — เจ้าของ/แอดมิน)</span></h2>
+    {% if reno_remaining is not none %}<div class="text-xs text-slate-500 mt-0.5">สิทธิ์ฟรีเหลือ {{ reno_remaining }}/{{ reno_limit }} รูป</div>{% endif %}
+    {% if d.images %}
+    <div class="mt-2 flex flex-wrap gap-2 items-end">
+      <label class="text-sm">รูป
+        <select id="renoImg" class="mt-1 border rounded-lg px-2 py-1.5">
+          {% for u in d.images %}<option value="{{ u }}">รูปที่ {{ loop.index }}</option>{% endfor %}
+        </select></label>
+      <label class="text-sm">สไตล์
+        <select id="renoStyle" class="mt-1 border rounded-lg px-2 py-1.5">
+          {% for k,v in reno_styles.items() %}<option value="{{ k }}">{{ v[0] }}</option>{% endfor %}
+        </select></label>
+      <button type="button" id="renoBtn" onclick="doRenovate('{{ d.id }}')" class="rounded-lg px-4 py-2 text-white text-sm" style="background:var(--survey)">สร้างภาพ (~30 วิ)</button>
+    </div>
+    <div id="renoResult" class="mt-3"></div>
+    {% else %}
+    <div class="text-xs text-amber-700 mt-2">ยังไม่มีรูปในประกาศ — อัปโหลดรูปก่อนถึงจะรีโนเวทได้</div>
+    {% endif %}
+  </div>
+  {% endif %}
   {% if d.lat and d.lng %}
   <div class="sheet overflow-hidden mt-4"><div id="mmap" style="height:260px"></div></div>
   <script>
@@ -3559,6 +3698,29 @@ loadProps();
     <p class="text-[11px] text-amber-700 bg-amber-50 rounded p-2 mt-3">⚠️ ประกาศจากผู้ใช้ทั่วไป — แปลงดีไม่ได้ตรวจสอบกรรมสิทธิ์ ควรตรวจเอกสาร/ดูของจริงก่อนโอนเงินทุกครั้ง</p>
   </div>
 </div>
+<script>
+function baMove(r){var el=r.closest('.ba');el.querySelector('.ba-aw').style.width=r.value+'%';el.querySelector('.ba-line').style.left=r.value+'%';}
+(function(){document.querySelectorAll('.ba').forEach(function(el){
+  var af=el.querySelector('.ba-after');
+  function fit(){af.style.width=el.clientWidth+'px';}
+  if(af.complete)fit();else af.addEventListener('load',fit);
+  window.addEventListener('resize',fit);
+});})();
+window.doRenovate=function(lid){
+  var btn=document.getElementById('renoBtn');
+  var sel=document.getElementById('renoImg'); if(!sel||!sel.value){alert('ยังไม่มีรูป');return;}
+  var img=sel.value, style=document.getElementById('renoStyle').value, old=btn.textContent;
+  btn.disabled=true; btn.textContent='กำลังสร้าง…';
+  var box=document.getElementById('renoResult');
+  box.innerHTML='<div class="text-xs text-slate-400">AI กำลังสร้างภาพ อาจใช้เวลา ~10-40 วินาที…</div>';
+  fetch('/api/renovate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:lid,image_url:img,style:style})})
+  .then(function(r){return r.json();}).then(function(d){
+    btn.disabled=false; btn.textContent=old;
+    if(d.ok){box.innerHTML='<div class="text-sm text-emerald-700 mb-2">✓ สร้างเสร็จ ('+d.style+')'+(d.remaining!=null?(' · สิทธิ์เหลือ '+d.remaining):'')+'</div><img src="'+d.result+'" style="width:100%;border-radius:8px"><div class="text-[11px] text-slate-400 mt-1">ภาพจำลอง AI — รีเฟรชหน้าเพื่อดูแบบ before/after</div>';}
+    else{box.innerHTML='<div class="text-sm text-red-600">'+(d.message||'ไม่สำเร็จ')+'</div>'; if(d.need_login&&d.login_url)location.href=d.login_url;}
+  }).catch(function(){btn.disabled=false;btn.textContent=old;box.innerHTML='<div class="text-sm text-red-600">เกิดข้อผิดพลาด ลองใหม่</div>';});
+};
+</script>
 {% endblock %}
 """,
 "my_listings.html": """
@@ -4619,6 +4781,70 @@ async def api_upload_image(request: Request):
     return JSONResponse({"ok": True, "url": pub})
 
 
+@app.post("/api/renovate")
+async def api_renovate(request: Request):
+    """สร้างภาพจำลองรีโนเวทด้วย AI (Gemini) — เจ้าของประกาศ/แอดมิน · ฟรี 5 รูป/คน"""
+    from fastapi.responses import JSONResponse
+    uid = current_user(request)
+    is_adm = admin_ok(request)
+    if not uid and not is_adm:
+        return JSONResponse({"ok": False, "need_login": True, "login_url": "/login"},
+                            status_code=401)
+    if not RENOVATE_ENABLED:
+        return JSONResponse({"ok": False,
+                             "message": "ยังไม่ได้เปิด AI Renovate (ต้องตั้ง GEMINI_API_KEY + Storage)"},
+                            status_code=503)
+    try:
+        data = await request.json()
+    except Exception:                                              # noqa: BLE001
+        data = dict(await read_form(request))
+    lid = (data.get("listing_id") or "").strip()
+    src = (data.get("image_url") or "").strip()
+    style = data.get("style") if data.get("style") in RENO_STYLES else "clean"
+    if not (lid and src):
+        raise HTTPException(422, "ต้องมี listing_id + image_url")
+    d = _load_member(lid, allow_for=(uid or None))
+    if not d and is_adm:
+        d = _load_member(lid, allow_for="*")
+    if not d:
+        raise HTTPException(404, "ไม่พบประกาศนี้")
+    if not is_adm and d.get("posted_by") != uid:
+        raise HTTPException(403, "ทำได้เฉพาะเจ้าของประกาศ")
+    if src not in (d.get("images") or []):
+        raise HTTPException(422, "รูปนี้ไม่อยู่ในประกาศ")
+    # quota ฟรี (แอดมินไม่จำกัด)
+    if not is_adm:
+        used = _reno_used(uid)
+        if used >= RENO_FREE_LIMIT:
+            return JSONResponse({"ok": False, "quota": True,
+                                 "message": f"ใช้สิทธิ์ฟรี {RENO_FREE_LIMIT} รูปหมดแล้ว "
+                                            f"— เร็ว ๆ นี้จะมีแพ็กเกจเติมเพิ่ม"},
+                                status_code=402)
+    img, mime = _fetch_image_bytes(src)
+    if not img:
+        return JSONResponse({"ok": False, "message": "โหลดรูปต้นทางไม่สำเร็จ"},
+                            status_code=502)
+    out = gemini_renovate(img, mime, RENO_STYLES[style][1])
+    if not out:
+        return JSONResponse({"ok": False, "message": "AI สร้างภาพไม่สำเร็จ ลองใหม่อีกครั้ง"},
+                            status_code=502)
+    out_bytes, out_mime = out
+    pub = upload_image_to_storage(out_bytes, out_mime)
+    if not pub:
+        return JSONResponse({"ok": False, "message": "อัปโหลดผลลัพธ์ไม่สำเร็จ"},
+                            status_code=502)
+    from core.db import connect
+    with connect() as conn:
+        conn.execute("insert into member_renovations "
+                     "(listing_id, source_url, result_url, style, created_by) "
+                     "values (%s, %s, %s, %s, %s)",
+                     (lid, src, pub, style, uid or "admin"))
+        conn.commit()
+    remaining = None if is_adm else max(0, RENO_FREE_LIMIT - _reno_used(uid))
+    return JSONResponse({"ok": True, "source": src, "result": pub,
+                         "style": RENO_STYLES[style][0], "remaining": remaining})
+
+
 def _load_member(lid, allow_for=None):
     """คืน dict ประกาศ+รูป; allow_for=uid เจ้าของ(เห็น pending ตัวเอง) หรือ '*'(admin)"""
     if DEMO_MODE:
@@ -4640,6 +4866,17 @@ def _load_member(lid, allow_for=None):
         return None
     d["images"] = [i["url"] for i in imgs]
     d["type_label"] = TYPE_LABELS.get(d.get("property_type"), "อื่น ๆ")
+    # ภาพจำลองรีโนเวท AI (ถ้ามี)
+    d["renovations"] = []
+    try:
+        from core.db import connect
+        with connect() as conn:
+            for rr in conn.execute(
+                    "select source_url, result_url, style from member_renovations "
+                    "where listing_id=%s order by created_at desc", (lid,)).fetchall():
+                d["renovations"].append(dict(rr))
+    except Exception:                                              # noqa: BLE001
+        pass
     return d
 
 
@@ -4826,11 +5063,16 @@ def member_detail(request: Request, lid: str):
                     "and viewed_at > now() - interval '30 days'", (lid,)).fetchone()["n"]
         except Exception as exc:                                    # noqa: BLE001
             log.warning("บันทึก/นับวิวประกาศไม่สำเร็จ (รัน migration 039?): %s", str(exc)[:100])
+    is_adm = admin_ok(request)
+    can_renovate = RENOVATE_ENABLED and (is_adm or (uid and uid == d.get("posted_by")))
+    reno_remaining = None if is_adm else max(0, RENO_FREE_LIMIT - _reno_used(uid)) if uid else RENO_FREE_LIMIT
     return env.get_template("member_detail.html").render(
         title=d["title"], d=d, views_30d=views_30d, og_title=d["title"],
         og_desc=(d.get("description") or d["title"])[:150],
         og_image=_abs_url(request, d["images"][0]) if d.get("images") else None,
         og_type="product", og_url=_abs_url(request, f"/m/{lid}"),
+        can_renovate=can_renovate, reno_remaining=reno_remaining,
+        reno_styles=RENO_STYLES, reno_limit=RENO_FREE_LIMIT,
         canonical=_abs_url(request, f"/m/{lid}"), **ubase(request))
 
 
