@@ -434,7 +434,10 @@ def led_extra(ref: str) -> dict:
         with connect() as conn:
             row = conn.execute(
                 """select office_name, raw_fields->>'court_name' as court_name,
-                          raw_fields->>'auction_venue' as auction_venue
+                          raw_fields->>'auction_venue' as auction_venue,
+                          raw_fields->'_open_post'->>'province_id' as led_pid,
+                          raw_fields->'_open_post'->>'province_name' as led_pname,
+                          raw_fields->'_open_post'->>'search_bid_date' as led_bdate
                      from listing_snapshots
                     where source_code='led_auction' and external_ref=%s
                     order by observed_at desc limit 1""", (ref,)).fetchone()
@@ -2052,6 +2055,18 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
       <div><dt class="text-slate-500 text-xs">{{ k }}</dt><dd class="font-medium">{{ v }}</dd></div>
       {% endfor %}
     </dl>
+    {% if r.led_pid and r.led_bdate %}
+    <form method="post" action="https://asset.led.go.th/newbidreg/asset_search_day.asp" target="_blank" rel="noopener" class="mt-4">
+      <input type="hidden" name="province_id" value="{{ r.led_pid }}">
+      <input type="hidden" name="province_name" value="{{ r.led_pname }}">
+      <input type="hidden" name="search_bid_date" value="{{ r.led_bdate }}">
+      <button class="inline-flex items-center gap-1.5 text-sm border rounded-lg px-3 py-2 hover:bg-slate-50 font-medium">
+        ↗ ดูประกาศที่กรมบังคับคดี
+        <span class="text-xs font-normal text-slate-400">สำนักงาน{{ r.led_pname }} · วันขาย {{ r.led_bdate }}</span>
+      </button>
+    </form>
+    <p class="text-[11px] text-slate-400 mt-1">เปิดหน้ารายการของสำนักงานในวันขายที่บันทึกไว้ — ถ้าเลยวันขายแล้ว ค้นนัดถัดไปในเว็บกรมฯ</p>
+    {% endif %}
   </div>
 
   {% if r.flags %}
@@ -3081,7 +3096,15 @@ loadProps();
   <tbody>
   {% for r in pending %}
     <tr class="border-b hover:bg-slate-50">
-      <td class="p-2 font-mono text-xs">{{ r.external_ref }}</td>
+      <td class="p-2 font-mono text-xs align-top">{{ r.external_ref }}
+        {% if r.led_pid and r.led_bdate %}
+        <form method="post" action="https://asset.led.go.th/newbidreg/asset_search_day.asp" target="_blank" rel="noopener" class="mt-1">
+          <input type="hidden" name="province_id" value="{{ r.led_pid }}">
+          <input type="hidden" name="province_name" value="{{ r.led_pname }}">
+          <input type="hidden" name="search_bid_date" value="{{ r.led_bdate }}">
+          <button class="text-blue-600 hover:underline text-[11px]">↗ เปิดที่กรมบังคับคดี</button>
+        </form>{% endif %}
+      </td>
       <td class="p-2 text-xs text-slate-600 max-w-[220px]">{{ r.office or '-' }}</td>
       <td class="p-2">{{ r.province or '-' }}{% if r.province_guessed %}<span class="text-[10px] text-amber-600 ml-1">จากศาล</span>{% endif %}</td>
       <td class="p-2">{{ r.district or '-' }}</td>
@@ -4388,6 +4411,9 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             r["office_name"] = ex["office_name"]
         r["court_name"] = ex.get("court_name")
         r["auction_venue"] = ex.get("auction_venue")
+        r["led_pid"] = ex.get("led_pid")
+        r["led_pname"] = ex.get("led_pname")
+        r["led_bdate"] = ex.get("led_bdate")
         if _blank(r.get("district")):
             r["district"] = None
         if _blank(r.get("subdistrict")):
@@ -6214,7 +6240,10 @@ def _parcel_pending(limit: int = 300):
             """select external_ref, province, district,
                       office_name,
                       raw_fields->>'court_name' as court_name,
-                      raw_fields->>'deed_no' as deed_no
+                      raw_fields->>'deed_no' as deed_no,
+                      raw_fields->'_open_post'->>'province_id' as led_pid,
+                      raw_fields->'_open_post'->>'province_name' as led_pname,
+                      raw_fields->'_open_post'->>'search_bid_date' as led_bdate
                  from (select distinct on (source_code, external_ref)
                               external_ref, province, district, office_name,
                               geo_precision, raw_fields, observed_at
