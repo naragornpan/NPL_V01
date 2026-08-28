@@ -4501,8 +4501,15 @@ def properties_geojson(request: Request,
                 "image": r["images_view"][0]["url"],
                 "detail_url": f"/p/{r['source_code']}/{r['external_ref']}",
             }})
+    import decimal
+
+    def _je(o):                                 # DB คืนค่าเป็น Decimal — แปลงให้ json ได้
+        if isinstance(o, decimal.Decimal):
+            return float(o)
+        return str(o)
     body = json.dumps({"type": "FeatureCollection", "features": feats},
-                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                      ensure_ascii=False, separators=(",", ":"),
+                      default=_je).encode("utf-8")
     _MAP_CACHE[_ck] = (_now, body)
     if len(_MAP_CACHE) > 40:                    # กันหน่วยความจำบวม — ทิ้งอันเก่าสุด
         _MAP_CACHE.pop(min(_MAP_CACHE, key=lambda k: _MAP_CACHE[k][0]), None)
