@@ -39,6 +39,13 @@ log = logging.getLogger(__name__)
 
 THAI_DIGITS = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
 
+# รายชื่อ 77 จังหวัด — ใช้เดาจังหวัดจากชื่อหน่วยงานที่ขาย/ศาล (เมื่อ city ว่าง)
+try:
+    from core.geocode import PROVINCE_CENTROIDS as _PROV_C
+    _LED_PROVINCES = sorted(_PROV_C.keys(), key=len, reverse=True)
+except Exception:                                 # noqa: BLE001
+    _LED_PROVINCES = []
+
 PROPERTY_TYPE_MAP = {
     "ที่ดินว่างเปล่า": "land",
     "ที่ดินพร้อมสิ่งปลูกสร้าง": "house",
@@ -241,13 +248,14 @@ class LedAuctionAdapter(BaseAdapter):
                 # province_name ที่จริงคือ "ชื่อสำนักงานที่ขาย" (กทม.มีหลาย สนง.
                 # เช่น "แพ่งกรุงเทพมหานคร 6") ส่วนจังหวัดจริงอยู่ที่ city
                 "office_name": (h.get("province_name") or office or "").strip() or None,
-                # ที่ตั้งทรัพย์: บางประเภท (คอนโด) ช่อง tumbol/ampur/city ว่าง
-                # ต้อง fallback ไปใช้ข้อมูลจากโฉนด (deedtumbol/deedampur/deedcity)
-                "province": (h.get("city") or h.get("deedcity") or "").strip() or None,
-                "district": (self._strip_admin(h.get("ampur"))
-                             or self._strip_admin(h.get("deedampur"))),
-                "subdistrict": (self._strip_admin(h.get("tumbol"))
-                                or self._strip_admin(h.get("deedtumbol"))),
+                # ที่ตั้งทรัพย์: บางประเภท (คอนโด) หรือบางสำนักงาน ช่อง city/ampur/tumbol
+                # เป็น "-" (LED ใช้ '-' แทนค่าว่าง) → fallback โฉนด แล้วเดาจังหวัดจาก
+                # "หน่วยงานที่ขาย" (province_name/ศาล) ให้จังหวัดไม่หลุดเป็นค่าว่าง
+                "province": (self._clean(h.get("city")) or self._clean(h.get("deedcity"))
+                             or self._province_from_office(h.get("province_name"), office,
+                                                           h.get("law_court_name"))),
+                "district": (self._admin(h.get("ampur")) or self._admin(h.get("deedampur"))),
+                "subdistrict": (self._admin(h.get("tumbol")) or self._admin(h.get("deedtumbol"))),
                 # ที่อยู่จริงของทรัพย์ (ไม่ใช่ sale_location1 ซึ่งเป็นสถานที่จัดประมูล)
                 "address_raw": self._property_address(h),
                 "property_type": self._map_type(h.get("assettypedesc"),
@@ -286,6 +294,30 @@ class LedAuctionAdapter(BaseAdapter):
             }
 
     # ─────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _clean(text: str | None) -> str | None:
+        """คืนค่าจริง หรือ None ถ้าเป็น placeholder ของ LED ('-'/'0'/ว่าง)"""
+        t = (text or "").strip()
+        return t if t and t not in ("-", "0") else None
+
+    @classmethod
+    def _admin(cls, text: str | None) -> str | None:
+        """ตัดคำนำหน้าเขตปกครอง + มองข้าม placeholder '-'"""
+        return cls._strip_admin(cls._clean(text))
+
+    @staticmethod
+    def _province_from_office(*texts) -> str | None:
+        """เดาจังหวัดจากชื่อหน่วยงานที่ขาย/ศาล เมื่อ city/deedcity เป็น '-' """
+        blob = " ".join(t for t in texts if t)
+        if not blob:
+            return None
+        if ("กรุงเทพ" in blob) or ("กทม" in blob):
+            return "กรุงเทพมหานคร"
+        for p in _LED_PROVINCES:                  # เรียงยาว→สั้น กันจับซ้อน
+            if p and p in blob:
+                return p
+        return None
+
     @staticmethod
     def _strip_admin(text: str | None) -> str | None:
         """ตัดคำนำหน้าเขตปกครองออก เช่น 'ตำบลแม่เล่ย์' -> 'แม่เล่ย์'
@@ -335,12 +367,12 @@ class LedAuctionAdapter(BaseAdapter):
         ใช้ข้อมูลโฉนดเป็น fallback เมื่อช่องหลักว่าง (พบบ่อยในคอนโด)
         ไม่ใช้ sale_location1 เพราะนั่นคือ "สถานที่จัดประมูล" ไม่ใช่ที่ตั้งทรัพย์
         """
-        no = (h.get("addrno") or "").strip()
-        sub = self._strip_admin(h.get("tumbol")) or self._strip_admin(h.get("deedtumbol"))
-        dist = self._strip_admin(h.get("ampur")) or self._strip_admin(h.get("deedampur"))
-        prov = (h.get("city") or h.get("deedcity") or "").strip()
+        no = self._clean(h.get("addrno"))
+        sub = self._admin(h.get("tumbol")) or self._admin(h.get("deedtumbol"))
+        dist = self._admin(h.get("ampur")) or self._admin(h.get("deedampur"))
+        prov = self._clean(h.get("city")) or self._clean(h.get("deedcity"))
         parts = []
-        if no and no not in ("-", "0"):
+        if no:
             parts.append(f"เลขที่ {no}")
         if sub:
             parts.append(f"แขวง/ตำบล {sub}")
