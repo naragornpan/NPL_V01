@@ -2556,39 +2556,29 @@ function selectedQS(){
   return p.toString();
 }
 
-function loadProps(){
-  cluster.clearLayers();
-  fetch('/api/properties.geojson?'+selectedQS()).then(r=>r.json()).then(gj=>{
-  const bounds=[];
-  gj.features.forEach(f=>{
-    const p=f.properties, c=f.geometry.coordinates;
-    const mk=L.circleMarker([c[1],c[0]],{radius:8,color:'#fff',weight:2,fillColor:colorFor(p),fillOpacity:0.95});
-    const gradeColor = {A:'#059669',B:'#65a30d',C:'#f59e0b',D:'#ea580c',E:'#dc2626'};
-    mk.bindPopup(`<div style="min-width:250px;max-width:280px">
+// สร้าง HTML ของ popup เมื่อคลิกเท่านั้น (ไม่สร้างล่วงหน้าทุกหมุด = เร็วขึ้นมาก)
+const _gradeColor = {A:'#059669',B:'#65a30d',C:'#f59e0b',D:'#ea580c',E:'#dc2626'};
+function popupHTML(p){
+  return `<div style="min-width:250px;max-width:280px">
       <img src="${p.image}" loading="lazy" referrerpolicy="no-referrer"
            onerror="this.style.display='none'"
            style="width:100%;height:120px;object-fit:cover;border-radius:6px">
-
       <div style="display:flex;align-items:center;gap:6px;margin-top:7px">
-        ${p.grade?`<span style="background:${gradeColor[p.grade]||'#94a3b8'};color:#fff;
+        ${p.grade?`<span style="background:${_gradeColor[p.grade]||'#94a3b8'};color:#fff;
           width:22px;height:22px;border-radius:4px;display:inline-flex;align-items:center;
           justify-content:center;font-weight:700;font-size:12px">${p.grade}</span>`:''}
         ${p.institution?`<span style="font-size:11px;background:#f1f5f9;padding:2px 7px;
           border-radius:4px;color:#334155">${p.institution}</span>`:''}
         ${p.type_label?`<span style="font-size:11px;color:#64748b">${p.type_label}</span>`:''}
       </div>
-
       <div style="font-weight:600;margin-top:5px;line-height:1.35">${p.title}</div>
-
       <div style="font-size:19px;font-weight:600;margin:5px 0 2px">${baht(p.price)}
         <span style="font-size:12px;font-weight:400;color:#64748b">บาท</span></div>
       ${p.price_per_sqwa?`<div style="font-size:11px;color:#64748b">${baht(p.price_per_sqwa)} บาท/ตร.ว.</div>`:''}
       ${p.discount?`<div style="color:#047857;font-size:12px;margin-top:2px">ต่ำกว่าประเมิน ${p.discount}%</div>`:''}
-
       <div style="font-size:11px;color:#64748b;margin-top:5px">
         ${p.area?`${p.area} ตร.ว.`:''}${p.area&&p.usable?' · ':''}${p.usable?`${p.usable} ตร.ม.`:''}
       </div>
-
       ${p.geo_precision==='parcel'
         ?`<div style="font-size:10px;color:#1F6F5C;margin-top:4px">พิกัดจริงของแปลง</div>`
         :p.geo_precision==='subdistrict'
@@ -2596,7 +2586,6 @@ function loadProps(){
         :(p.geo_precision?`<div style="font-size:10px;color:#b45309;margin-top:4px">
            พิกัดระดับ${p.geo_precision==='province'?'จังหวัด':'อำเภอ'} — ทรัพย์ในพื้นที่เดียวกันซ้อนกัน</div>`:'')}
       ${p.address?`<div style="font-size:11px;color:#475569;margin-top:4px">${p.address}</div>`:''}
-
       <div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap">
         <a href="${p.detail_url}" style="flex:1;text-align:center;padding:6px 10px;
            background:#0f172a;color:#fff;border-radius:6px;font-size:12px;
@@ -2606,19 +2595,35 @@ function loadProps(){
            font-size:12px;text-decoration:none;color:#0f172a">ต้นทาง</a>`:''}
       </div>
       ${p.ref?`<div style="font-size:10px;color:#94a3b8;margin-top:6px">${p.ref}</div>`:''}
-    </div>`);
-    cluster.addLayer(mk); bounds.push([c[1],c[0]]);
-  });
-  if(bounds.length) map.fitBounds(bounds,{padding:[40,40],maxZoom:14});
-  // แสดงจำนวนผลลัพธ์จริงหลังกรอง — ทำให้เห็นว่าตัวกรองทำงาน
-  const c=document.getElementById('srccount');
-  if(c){
-    const all=[...document.querySelectorAll('.srcflt')];
-    const on=all.filter(b=>b.checked).length;
-    const flt=(on && on<all.length) ? (' · กรอง '+on+' แหล่ง') : ' · ทุกแหล่ง';
-    c.textContent='แสดง '+(gj.features.length).toLocaleString('th-TH')+' ทรัพย์'+flt;
-  }
-  });
+    </div>`;
+}
+
+let _reqSeq = 0, _fitted = false;
+function loadProps(){
+  const my = ++_reqSeq;                       // กันผลเก่าซ้อนผลใหม่ (แก้หมุดเบิล)
+  const cEl=document.getElementById('srccount');
+  if(cEl) cEl.textContent='กำลังโหลดแผนที่…';
+  fetch('/api/properties.geojson?'+selectedQS()).then(r=>r.json()).then(gj=>{
+    if(my !== _reqSeq) return;                // มีคำขอใหม่กว่าแล้ว — ทิ้งผลนี้
+    cluster.clearLayers();                    // เคลียร์ตอน "ได้ผลจริง" ไม่ใช่ตอนเริ่ม
+    const markers=[]; const bounds=[];
+    gj.features.forEach(f=>{
+      const p=f.properties, c=f.geometry.coordinates;
+      const mk=L.circleMarker([c[1],c[0]],{radius:8,color:'#fff',weight:2,fillColor:colorFor(p),fillOpacity:0.95});
+      mk.on('click', function(){                // ผูก popup ตอนคลิก (lazy)
+        if(!mk._bound){ mk.bindPopup(popupHTML(p),{maxWidth:300}); mk._bound=true; mk.openPopup(); }
+      });
+      markers.push(mk); bounds.push([c[1],c[0]]);
+    });
+    cluster.addLayers(markers);               // เพิ่มทีเดียว (เร็วกว่าเพิ่มทีละหมุด)
+    if(bounds.length && !_fitted){ map.fitBounds(bounds,{padding:[40,40],maxZoom:14}); _fitted=true; }
+    if(cEl){
+      const all=[...document.querySelectorAll('.srcflt')];
+      const on=all.filter(b=>b.checked).length;
+      const flt=(on && on<all.length) ? (' · กรอง '+on+' แหล่ง') : ' · ทุกแหล่ง';
+      cEl.textContent='แสดง '+(gj.features.length).toLocaleString('th-TH')+' ทรัพย์'+flt;
+    }
+  }).catch(()=>{ if(my===_reqSeq && cEl) cEl.textContent='โหลดแผนที่ไม่สำเร็จ ลองใหม่'; });
 }
 
 loadProps();
@@ -4435,6 +4440,10 @@ def map_view(request: Request, token: str = Query("")):
         **base(is_admin=is_admin, admin_token=token))
 
 
+_MAP_CACHE: dict = {}          # geojson แผนที่ (เหมือนกันทุกคน) — cache กันสร้างซ้ำ
+_MAP_TTL = 600                 # 10 นาที
+
+
 @app.get("/api/properties.geojson")
 def properties_geojson(request: Request,
                        province: str | None = Query(None),
@@ -4446,7 +4455,16 @@ def properties_geojson(request: Request,
                        min_grade: str | None = Query(None),
                        show_special: bool = Query(False),
                        token: str = Query("")):
+    import time as _t
+    from fastapi.responses import Response
     is_admin = admin_ok(request, token)
+    _ck = (tuple(sorted(institution or ())), province or "", district or "", ptype or "",
+           max_price or "", hide_critical, min_grade or "", show_special, is_admin)
+    _hdr = {"Cache-Control": "public, max-age=600"}
+    _now = _t.time()
+    _hit = _MAP_CACHE.get(_ck)
+    if _hit and _now - _hit[0] < _MAP_TTL:
+        return Response(_hit[1], media_type="application/json", headers=_hdr)
     rows, _ = fetch_rows(province=province or None, ptype=ptype or None,
                          max_price=_num(max_price),
                          hide_critical=hide_critical, institution=institution,
@@ -4483,7 +4501,12 @@ def properties_geojson(request: Request,
                 "image": r["images_view"][0]["url"],
                 "detail_url": f"/p/{r['source_code']}/{r['external_ref']}",
             }})
-    return {"type": "FeatureCollection", "features": feats}
+    body = json.dumps({"type": "FeatureCollection", "features": feats},
+                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    _MAP_CACHE[_ck] = (_now, body)
+    if len(_MAP_CACHE) > 40:                    # กันหน่วยความจำบวม — ทิ้งอันเก่าสุด
+        _MAP_CACHE.pop(min(_MAP_CACHE, key=lambda k: _MAP_CACHE[k][0]), None)
+    return Response(body, media_type="application/json", headers=_hdr)
 
 
 @app.get("/api/zones.geojson")
