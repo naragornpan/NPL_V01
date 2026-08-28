@@ -3070,14 +3070,14 @@ loadProps();
 <div class="sheet overflow-x-auto">
 <table class="w-full text-sm">
   <thead><tr class="text-left border-b bg-slate-50">
-    <th class="p-2">ref</th><th class="p-2">ศาล/สำนักงานบังคับคดี</th>
+    <th class="p-2">ref</th><th class="p-2">หน่วยงานที่ขาย</th>
     <th class="p-2">จังหวัด</th><th class="p-2">อำเภอ</th>
     <th class="p-2">เลขโฉนด</th><th class="p-2">พิกัดแปลง (lat,lng)</th></tr></thead>
   <tbody>
   {% for r in pending %}
     <tr class="border-b hover:bg-slate-50">
       <td class="p-2 font-mono text-xs">{{ r.external_ref }}</td>
-      <td class="p-2 text-xs text-slate-600 max-w-[220px]">{{ r.court or '-' }}</td>
+      <td class="p-2 text-xs text-slate-600 max-w-[220px]">{{ r.office or '-' }}</td>
       <td class="p-2">{{ r.province or '-' }}{% if r.province_guessed %}<span class="text-[10px] text-amber-600 ml-1">จากศาล</span>{% endif %}</td>
       <td class="p-2">{{ r.district or '-' }}</td>
       <td class="p-2 font-semibold">{{ r.deed_no }}</td>
@@ -4397,8 +4397,7 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         ("ราคา/ตร.ว.", f"{r['price_per_sqwa']:,.0f} บาท" if r.get("price_per_sqwa") else None),
         ("นัดขายครั้งที่", r.get("auction_round")),
         ("วันขายทอดตลาด", r.get("auction_date")),
-        ("ศาล", r.get("court_name")),
-        ("สำนักงานบังคับคดี", r.get("office_name")),
+        ("หน่วยงานที่ขาย", r.get("office_name")),
         ("สถานที่ขายทอดตลาด", r.get("auction_venue")),
         ("การจำนอง", "ติดไปกับทรัพย์" if r.get("mortgage_carried") else "ไม่ติดไป"),
         ("ผู้อยู่อาศัย", r.get("occupancy_note")),
@@ -6224,8 +6223,8 @@ def _parcel_pending(limit: int = 300):
                     from listing_snapshots where source_code = 'led_auction'
                    order by source_code, external_ref, observed_at desc) s
                 where geo_precision = 'parcel'""").fetchone()["n"]
-    for p in pending:                             # เติมจังหวัดจากชื่อศาล/สำนักงาน ถ้าว่าง
-        p["court"] = p.get("court_name") or p.get("office_name")
+    for p in pending:                             # เติมจังหวัดจาก "หน่วยงานที่ขาย" ถ้าว่าง
+        p["office"] = p.get("office_name")        # หน่วยงานที่ขาย (ไม่ใช่ศาล)
         if not p.get("province"):
             g = province_from_texts(p.get("office_name"), p.get("court_name"))
             if g:
@@ -6279,8 +6278,43 @@ def admin_led_fill_province(request: Request, token: str = Query("")):
     except Exception as exc:                        # noqa: BLE001
         return PlainTextResponse(f"ผิดพลาด: {str(exc)[:200]}", status_code=500)
     return PlainTextResponse(
-        f"สแกน {scanned} รายการที่จังหวัดว่าง · เติมจังหวัดจากศาล/สำนักงานได้ {filled} รายการ\n"
-        f"(เหลือ {scanned - filled} ที่เดาไม่ได้จากชื่อศาล)")
+        f"สแกน {scanned} รายการที่จังหวัดว่าง · เติมจังหวัดจากหน่วยงานที่ขายได้ {filled} รายการ\n"
+        f"(เหลือ {scanned - filled} ที่เดาไม่ได้)")
+
+
+@app.get("/admin/led/raw")
+def admin_led_raw(request: Request, token: str = Query(""), ref: str = Query("")):
+    """ดูข้อมูลดิบของทรัพย์ LED 1 รายการ (admin) — ใช้ตรวจว่าฟิลด์ 'หน่วยงานที่ขาย' อยู่ตรงไหน"""
+    from fastapi.responses import JSONResponse
+    _require_admin(request, token)
+    if DEMO_MODE or not ref:
+        return JSONResponse({"note": "ใส่ ?ref=led:xxxxx"}, status_code=400)
+    try:
+        from core.db import connect
+        with connect() as conn:
+            row = conn.execute(
+                """select province, district, subdistrict, office_name, raw_fields
+                     from listing_snapshots
+                    where source_code='led_auction' and external_ref=%s
+                    order by observed_at desc limit 1""", (ref,)).fetchone()
+        if not row:
+            return JSONResponse({"note": "ไม่พบ ref นี้"}, status_code=404)
+        d = dict(row)
+        rf = d.get("raw_fields") or {}
+        if isinstance(rf, str):
+            rf = json.loads(rf)
+        # ดึงเฉพาะฟิลด์ที่เกี่ยวกับ location/หน่วยงาน เพื่ออ่านง่าย
+        keys = ["province_name", "city", "deedcity", "ampur", "deedampur",
+                "tumbol", "deedtumbol", "court_name", "office_name", "law_court_name",
+                "auction_venue", "sale_location1"]
+        return JSONResponse({
+            "columns": {"province": d["province"], "district": d["district"],
+                        "subdistrict": d["subdistrict"], "office_name": d["office_name"]},
+            "raw_location_fields": {k: rf.get(k) for k in keys if k in rf},
+            "all_raw_keys": sorted(rf.keys()),
+        })
+    except Exception as exc:                                        # noqa: BLE001
+        return JSONResponse({"error": str(exc)[:200]}, status_code=500)
 
 
 @app.post("/admin/parcels/set")
