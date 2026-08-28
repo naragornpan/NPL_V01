@@ -407,6 +407,11 @@ except Exception:                                                  # noqa: BLE00
     _TH_PROVINCES = []
 
 
+def _blank(v) -> bool:
+    """ถือว่าว่าง ถ้าเป็น None/''/'-'/'0' (LED ใช้ '-' เป็น placeholder ของค่าว่าง)"""
+    return (v or "").strip() in ("", "-", "0")
+
+
 def province_from_texts(*texts) -> str | None:
     """เดาจังหวัดจากข้อความ (ชื่อศาล/สำนักงานบังคับคดี ฯลฯ) โดยจับชื่อจังหวัดที่ปรากฏ"""
     blob = " ".join(t for t in texts if t)
@@ -4383,7 +4388,11 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             r["office_name"] = ex["office_name"]
         r["court_name"] = ex.get("court_name")
         r["auction_venue"] = ex.get("auction_venue")
-        if not r.get("province"):                 # เดาจังหวัดจากชื่อศาล/สำนักงาน
+        if _blank(r.get("district")):
+            r["district"] = None
+        if _blank(r.get("subdistrict")):
+            r["subdistrict"] = None
+        if _blank(r.get("province")):             # เดาจังหวัดจากหน่วยงานที่ขาย
             guessed = province_from_texts(r.get("office_name"), ex.get("court_name"),
                                           ex.get("auction_venue"), r.get("title"),
                                           r.get("address_raw"))
@@ -6225,11 +6234,12 @@ def _parcel_pending(limit: int = 300):
                 where geo_precision = 'parcel'""").fetchone()["n"]
     for p in pending:                             # เติมจังหวัดจาก "หน่วยงานที่ขาย" ถ้าว่าง
         p["office"] = p.get("office_name")        # หน่วยงานที่ขาย (ไม่ใช่ศาล)
-        if not p.get("province"):
+        if _blank(p.get("district")):
+            p["district"] = None                  # โชว์ '-' แทน placeholder
+        if _blank(p.get("province")):
             g = province_from_texts(p.get("office_name"), p.get("court_name"))
-            if g:
-                p["province"] = g
-                p["province_guessed"] = True
+            p["province"] = g or None
+            p["province_guessed"] = bool(g)
     return pending, done
 
 
@@ -6262,8 +6272,8 @@ def admin_led_fill_province(request: Request, token: str = Query("")):
                                   external_ref, province, office_name, raw_fields, observed_at
                              from listing_snapshots where source_code='led_auction'
                             order by source_code, external_ref, observed_at desc) s
-                    where s.province is null or s.province=''
-                    limit 8000""").fetchall()
+                    where coalesce(s.province,'') in ('', '-', '0')
+                    limit 12000""").fetchall()
             for r in rows:
                 scanned += 1
                 g = province_from_texts(r["office_name"], r["court_name"])
@@ -6271,7 +6281,7 @@ def admin_led_fill_province(request: Request, token: str = Query("")):
                     conn.execute(
                         "update listing_snapshots set province=%s "
                         "where source_code='led_auction' and external_ref=%s "
-                        "and (province is null or province='')", (g, r["external_ref"]))
+                        "and coalesce(province,'') in ('', '-', '0')", (g, r["external_ref"]))
                     filled += 1
             conn.commit()
         _MAP_CACHE.clear()                          # ล้าง cache แผนที่ให้เห็นผลทันที
