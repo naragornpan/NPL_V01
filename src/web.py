@@ -2104,14 +2104,14 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
           var cnt = R===500?d.c500 : R===1000?d.c1000 : d.c3000;
           return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
         }).join('');
-        var names=[];
-        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist>prevR && x.dist<=R) names.push(x); }); });
-        names.sort(function(a,b){ return a.dist-b.dist; });
-        var seen={}, top=[];
-        for(var i=0;i<names.length && top.length<5;i++){
-          var nm=names[i].name;
-          if(nm && !seen[nm]){ seen[nm]=1; top.push('<span class="nb-nm">'+nm+'</span> <span class="nb-dm">'+fd(names[i].dist)+'</span>'); }
-        }
+        var top=[];
+        CAT.forEach(function(c){
+          var arr=((DATA[c[0]]||{}).near||[]).filter(function(x){ return x.dist>prevR && x.dist<=R; });
+          if(arr.length){ arr.sort(function(a,b){ return a.dist-b.dist; });
+            top.push({ic:c[1], nm:arr[0].name||'', d:arr[0].dist}); }
+        });
+        top.sort(function(a,b){ return a.d-b.d; });
+        top=top.map(function(t){ return '<span class="nb-ic">'+t.ic+'</span> <span class="nb-nm">'+t.nm+'</span> <span class="nb-dm">'+fd(t.d)+'</span>'; });
         h+='<div class="nb-ring" style="animation-delay:'+(idx*0.14).toFixed(2)+'s">'
           +'<div class="nb-rlabel">'+rg[1]+'</div>'
           +'<div class="nb-cats">'+cats+'</div>'
@@ -2231,6 +2231,8 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
       #nearby .nb-cat.zero{opacity:.5}
       #nearby .nb-nm{color:#1f2937;font-weight:500}
       #nearby .nb-dm{color:#6b7280;font-variant-numeric:tabular-nums}
+      #nearby .nb-ic{margin-right:2px}
+      #nearby .nb-names span{white-space:nowrap}
       #nearby .nb-names{margin-top:6px;font-size:11.5px;color:#64748b;line-height:1.65}
       @keyframes nbin{to{opacity:1;transform:none}}
     </style>
@@ -4014,6 +4016,8 @@ loadProps();
       #nearby .nb-cat.zero{opacity:.5}
       #nearby .nb-nm{color:#1f2937;font-weight:500}
       #nearby .nb-dm{color:#6b7280;font-variant-numeric:tabular-nums}
+      #nearby .nb-ic{margin-right:2px}
+      #nearby .nb-names span{white-space:nowrap}
       #nearby .nb-names{margin-top:6px;font-size:12px;color:#64748b;line-height:1.65}
       @keyframes nbin{to{opacity:1;transform:none}}
     </style>
@@ -4043,14 +4047,14 @@ loadProps();
           var cnt = R===500?d.c500 : R===1000?d.c1000 : d.c3000;
           return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
         }).join('');
-        var names=[];
-        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist>prevR && x.dist<=R) names.push(x); }); });
-        names.sort(function(a,b){ return a.dist-b.dist; });
-        var seen={}, top=[];
-        for(var i=0;i<names.length && top.length<6;i++){
-          var nm=names[i].name;
-          if(nm && !seen[nm]){ seen[nm]=1; top.push('<span class="nb-nm">'+nm+'</span> <span class="nb-dm">'+fd(names[i].dist)+'</span>'); }
-        }
+        var top=[];
+        CAT.forEach(function(c){
+          var arr=((DATA[c[0]]||{}).near||[]).filter(function(x){ return x.dist>prevR && x.dist<=R; });
+          if(arr.length){ arr.sort(function(a,b){ return a.dist-b.dist; });
+            top.push({ic:c[1], nm:arr[0].name||'', d:arr[0].dist}); }
+        });
+        top.sort(function(a,b){ return a.d-b.d; });
+        top=top.map(function(t){ return '<span class="nb-ic">'+t.ic+'</span> <span class="nb-nm">'+t.nm+'</span> <span class="nb-dm">'+fd(t.d)+'</span>'; });
         h+='<div class="nb-ring" style="animation-delay:'+(idx*0.14).toFixed(2)+'s">'
           +'<div class="nb-rlabel">'+rg[1]+'</div>'
           +'<div class="nb-cats">'+cats+'</div>'
@@ -4570,17 +4574,33 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             if guessed:
                 r["province"] = guessed
                 prov_inferred = True
+    _op = r.get("opening_price")
+    _usm = r.get("usable_area_sqm")
+    _pps_m = round(_op / _usm) if _op and _usm else None          # ราคา/ตร.ม. (คอนโด/ห้องชุด)
+    _stn, _stn_m = r.get("nearest_station_name"), r.get("nearest_station_m")
+    _stn_txt = None
+    if _stn and _stn_m is not None:
+        _sd = f"{int(_stn_m):,} ม." if _stn_m < 1000 else f"{_stn_m / 1000:.1f} กม."
+        _stn_txt = f"{_stn} · ห่าง {_sd}"
     specs = [(k, v) for k, v in [
         ("ประเภท", r["type_label"]),
         ("เนื้อที่ดิน", f"{r['land_area_sqwa']} ตร.ว." if r.get("land_area_sqwa") else None),
         ("พื้นที่ใช้สอย", f"{r['usable_area_sqm']} ตร.ม." if r.get("usable_area_sqm") else None),
+        ("ห้องนอน", f"{r['bedrooms']} ห้อง" if r.get("bedrooms") else None),
+        ("ห้องน้ำ", f"{r['bathrooms']} ห้อง" if r.get("bathrooms") else None),
+        ("ที่จอดรถ", f"{r['parking']} คัน" if r.get("parking") else None),
+        ("ราคา/ตร.ม.", f"{_pps_m:,} บาท" if _pps_m else None),
         ("ราคา/ตร.ว.", f"{r['price_per_sqwa']:,.0f} บาท" if r.get("price_per_sqwa") else None),
+        ("ราคาตั้งขาย", f"{r['list_price']:,.0f} บาท" if r.get("list_price") else None),
+        ("ราคาพิเศษ", f"{r['special_price']:,.0f} บาท" if r.get("special_price") else None),
+        ("สถานีใกล้สุด", _stn_txt),
         ("นัดขายครั้งที่", r.get("auction_round")),
         ("วันขายทอดตลาด", r.get("auction_date")),
         ("หน่วยงานที่ขาย", r.get("office_name")),
         ("สถานที่ขายทอดตลาด", r.get("auction_venue")),
         ("การจำนอง", "ติดไปกับทรัพย์" if r.get("mortgage_carried") else "ไม่ติดไป"),
         ("ผู้อยู่อาศัย", r.get("occupancy_note")),
+        ("สภาพทรัพย์", "ปรับปรุง/รีโนเวทแล้ว" if r.get("renovated") else None),
         ("จังหวัด", (r.get("province") + " (จากศาล)") if prov_inferred and r.get("province") else r.get("province")),
         ("อำเภอ/เขต", r.get("district")),
         ("ตำบล/แขวง", r.get("subdistrict")),
