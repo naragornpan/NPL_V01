@@ -18,6 +18,7 @@ jobs:
           - { source: bam,         pages: 30 }
           - { source: ghb,         pages: 30 }
           - { source: krungsri,   pages: 30 }   # กรุงศรี — server-render 10/หน้า
+          - { source: gsb,        pages: 40 }   # ออมสิน — SSR 12/หน้า (stale-stop รายวัน)
           - { source: ktb,         pages: 30 }
           - { source: ttb,         pages: 30 }
           - { source: sam,         pages: 20 }   # ช้ากว่า — ลดหน้า
