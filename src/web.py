@@ -2230,6 +2230,13 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <div class="text-lg font-semibold text-slate-600 mt-0.5">{{ auc_result.result or 'ไม่มีผู้สู้ราคา' }}</div>
     <div class="text-xs text-slate-400">ราคาประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }} บาท</div>
     {% endif %}
+    {% if auc_result.case_no %}
+    <div class="text-xs text-slate-500 mt-2 pt-2 border-t" style="border-color:var(--rule)">
+      คดีหมายเลขแดง <b>{{ auc_result.case_no }}</b>{% if auc_result.court %} · ศาล{{ auc_result.court }}{% endif %}{% if auc_result.deed and auc_result.deed != '-' %} · โฉนด {{ auc_result.deed }}{% endif %}
+      {% if auc_result.plaintiff %}<div class="text-slate-400">โจทก์: {{ auc_result.plaintiff }}</div>{% endif %}
+      <div class="text-[11px] text-slate-400 mt-1">ใช้เลขคดีแดงนี้ค้นสำนวน/ผลที่ <a href="https://asset.led.go.th/report/reports.asp" target="_blank" rel="noopener" class="brandlink">กรมบังคับคดี</a> ได้</div>
+    </div>
+    {% endif %}
     <a href="/auction-results" class="text-xs brandlink inline-block mt-1.5">ดูสรุปผลจบประมูลทั้งหมด →</a>
   </div>
   {% endif %}
@@ -4202,6 +4209,8 @@ window.doRenovate=function(lid){
         <div class="font-medium text-sm line-clamp-1">{{ type_labels.get(r.property_type, r.property_type_th or 'ทรัพย์') }}
           {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}</div>
         <div class="text-xs text-slate-400 mt-0.5">{{ r.province or '' }}{% if r.court %} · ศาล{{ r.court }}{% endif %}</div>
+        {% if r.case_no %}<div class="text-[11px] text-slate-400 mt-0.5">คดีแดง {{ r.case_no }}{% if r.deed and r.deed != '-' %} · โฉนด {{ r.deed }}{% endif %}</div>{% endif %}
+        {% if r.plaintiff %}<div class="text-[11px] text-slate-400 line-clamp-1">โจทก์ {{ r.plaintiff }}</div>{% endif %}
       </div>
       {% if r.grade %}<span class="seal g-{{ r.grade }}">{{ r.grade }}</span>{% endif %}
     </div>
@@ -4725,7 +4734,8 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             from core.db import connect
             with connect() as conn:
                 _ar = conn.execute(
-                    "select sale_date, result, is_sold, sold_price, appraised_price "
+                    "select sale_date, result, is_sold, sold_price, appraised_price, "
+                    "case_no, court, deed, plaintiff "
                     "from led_auction_results where matched_ref = %s "
                     "order by sale_date desc limit 1", (ref,)).fetchone()
             if _ar:
@@ -6037,7 +6047,8 @@ def auction_results(request: Request, result: str = Query(""),
             from core.db import connect
             cte = ("""with latest as (
                         select distinct on (matched_ref) matched_ref as ref, sale_date, result,
-                               is_sold, sold_price, appraised_price, property_type_th, court, deed
+                               is_sold, sold_price, appraised_price, property_type_th, court, deed,
+                               case_no, plaintiff
                           from led_auction_results where matched_ref is not null
                          order by matched_ref, sale_date desc)""")
             conds = ["1=1"]
@@ -6060,7 +6071,8 @@ def auction_results(request: Request, result: str = Query(""),
                 rows = [dict(r) for r in conn.execute(f"""
                     {cte}
                     select l.ref, l.sale_date, l.result, l.is_sold, l.sold_price,
-                           l.appraised_price, l.property_type_th, l.court,
+                           l.appraised_price, l.property_type_th, l.court, l.case_no,
+                           l.plaintiff, l.deed,
                            g.province, g.district, g.subdistrict, g.property_type, g.grade
                       from latest l {join}
                      where {where}
