@@ -2204,6 +2204,23 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     {% endif %}
   </div>
 
+  {% if r.lat and r.lng %}
+  <div class="sheet p-4" id="nearby" data-lat="{{ r.lat }}" data-lng="{{ r.lng }}">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้</h2>
+      <div class="flex gap-1 text-[11px]">
+        <button data-r="1000" class="nb-tab border rounded-full px-2.5 py-0.5">1 กม.</button>
+        <button data-r="3000" class="nb-tab border rounded-full px-2.5 py-0.5">3 กม.</button>
+        <button data-r="5000" class="nb-tab border rounded-full px-2.5 py-0.5" style="background:var(--ink);color:#fff;border-color:var(--ink)">5 กม.</button>
+      </div>
+    </div>
+    <div id="nb-body" class="mt-3 text-sm text-slate-500">
+      <span class="inline-flex items-center gap-2"><span class="animate-pulse">⏳</span> กำลังวิเคราะห์รอบทรัพย์…</span>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap — บางพื้นที่อาจไม่ครบ</p>
+  </div>
+  {% endif %}
+
   <!-- แชร์ -->
   <div class="sheet p-3 flex items-center gap-2 flex-wrap text-sm">
     <span class="font-medium text-slate-600">แชร์:</span>
@@ -2256,23 +2273,6 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     function copyLink(b){navigator.clipboard.writeText(location.href).then(function(){var t=b.textContent;b.textContent='คัดลอกแล้ว ✓';setTimeout(function(){b.textContent=t;},1500);});}
     calcMortgage();
   </script>
-  {% endif %}
-
-  {% if r.lat and r.lng %}
-  <div class="sheet p-4" id="nearby" data-lat="{{ r.lat }}" data-lng="{{ r.lng }}">
-    <div class="flex items-center justify-between gap-2 flex-wrap">
-      <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้</h2>
-      <div class="flex gap-1 text-[11px]">
-        <button data-r="1000" class="nb-tab border rounded-full px-2.5 py-0.5">1 กม.</button>
-        <button data-r="3000" class="nb-tab border rounded-full px-2.5 py-0.5">3 กม.</button>
-        <button data-r="5000" class="nb-tab border rounded-full px-2.5 py-0.5" style="background:var(--ink);color:#fff;border-color:var(--ink)">5 กม.</button>
-      </div>
-    </div>
-    <div id="nb-body" class="mt-3 text-sm text-slate-500">
-      <span class="inline-flex items-center gap-2"><span class="animate-pulse">⏳</span> กำลังวิเคราะห์รอบทรัพย์…</span>
-    </div>
-    <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap — บางพื้นที่อาจไม่ครบ</p>
-  </div>
   {% endif %}
 
   {% if r.forecast %}
