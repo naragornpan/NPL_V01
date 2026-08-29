@@ -2048,6 +2048,20 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     </div>
   </div>
 
+  <!-- แชร์ -->
+  <div class="sheet p-3 flex items-center gap-2 flex-wrap text-sm">
+    <span class="font-medium text-slate-600">แชร์:</span>
+    <a href="#" onclick="return shareLine()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#06C755">LINE</a>
+    <a href="#" onclick="return shareFb()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#1877F2">Facebook</a>
+    <button onclick="copyLink(this)" class="px-3 py-1.5 rounded-lg border text-xs font-medium text-slate-600 hover:bg-slate-50">คัดลอกลิงก์</button>
+    {% if any_login %}
+    <button type="button" onclick="toggleFav(this)" data-sc="{{ r.source_code }}" data-ref="{{ r.external_ref }}"
+      aria-pressed="{{ 'true' if is_fav else 'false' }}"
+      class="ml-auto px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-slate-50"
+      style="border-color:var(--seal);color:var(--seal)">{{ '❤️ บันทึกแล้ว' if is_fav else '🤍 บันทึกทรัพย์นี้' }}</button>
+    {% endif %}
+  </div>
+
   <div class="sheet p-4">
     <h2 class="font-semibold mb-3">รายละเอียดทรัพย์</h2>
     <dl class="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 text-sm">
@@ -2083,19 +2097,19 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
       var rings=[[1000,'1 กม.'],[3000,'3 กม.'],[5000,'5 กม.']];
       var h='';
       rings.forEach(function(rg,idx){
-        var R=rg[0];
+        var R=rg[0], prevR=idx===0?0:rings[idx-1][0];
         var cats=CAT.map(function(c){
           var d=DATA[c[0]]||{c1:0,c3:0,c5:0};
           var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
           return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
         }).join('');
         var names=[];
-        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist<=R) names.push(x); }); });
+        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist>prevR && x.dist<=R) names.push(x); }); });
         names.sort(function(a,b){ return a.dist-b.dist; });
         var seen={}, top=[];
-        for(var i=0;i<names.length && top.length<4;i++){
-          var nm=names[i].name||names[i].sub;
-          if(nm && !seen[nm]){ seen[nm]=1; top.push(nm+' <span style="opacity:.7">'+fd(names[i].dist)+'</span>'); }
+        for(var i=0;i<names.length && top.length<5;i++){
+          var nm=names[i].name;
+          if(nm && !seen[nm]){ seen[nm]=1; top.push('<span class="nb-nm">'+nm+'</span> <span class="nb-dm">'+fd(names[i].dist)+'</span>'); }
         }
         h+='<div class="nb-ring" style="animation-delay:'+(idx*0.14).toFixed(2)+'s">'
           +'<div class="nb-rlabel">'+rg[1]+'</div>'
@@ -2211,8 +2225,10 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
       #nearby .nb-cats{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:14px}
       #nearby .nb-cat{display:inline-flex;align-items:center;gap:4px;color:#334155}
       #nearby .nb-cat b{font-variant-numeric:tabular-nums;font-weight:600}
-      #nearby .nb-cat.zero{opacity:.3}
-      #nearby .nb-names{margin-top:6px;font-size:11.5px;color:#8a97a6;line-height:1.55}
+      #nearby .nb-cat.zero{opacity:.5}
+      #nearby .nb-nm{color:#1f2937;font-weight:500}
+      #nearby .nb-dm{color:#6b7280;font-variant-numeric:tabular-nums}
+      #nearby .nb-names{margin-top:6px;font-size:11.5px;color:#64748b;line-height:1.65}
       @keyframes nbin{to{opacity:1;transform:none}}
     </style>
     <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้ <span class="text-xs font-normal text-slate-400">มีอะไรใกล้ๆ</span></h2>
@@ -2222,20 +2238,6 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap</p>
   </div>
   {% endif %}
-
-  <!-- แชร์ -->
-  <div class="sheet p-3 flex items-center gap-2 flex-wrap text-sm">
-    <span class="font-medium text-slate-600">แชร์:</span>
-    <a href="#" onclick="return shareLine()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#06C755">LINE</a>
-    <a href="#" onclick="return shareFb()" class="px-3 py-1.5 rounded-lg text-white text-xs font-medium" style="background:#1877F2">Facebook</a>
-    <button onclick="copyLink(this)" class="px-3 py-1.5 rounded-lg border text-xs font-medium text-slate-600 hover:bg-slate-50">คัดลอกลิงก์</button>
-    {% if any_login %}
-    <button type="button" onclick="toggleFav(this)" data-sc="{{ r.source_code }}" data-ref="{{ r.external_ref }}"
-      aria-pressed="{{ 'true' if is_fav else 'false' }}"
-      class="ml-auto px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-slate-50"
-      style="border-color:var(--seal);color:var(--seal)">{{ '❤️ บันทึกแล้ว' if is_fav else '🤍 บันทึกทรัพย์นี้' }}</button>
-    {% endif %}
-  </div>
 
   {% if r.opening_price %}
   <!-- เครื่องคำนวณผ่อน (ประมาณการ) -->
@@ -3985,8 +3987,10 @@ loadProps();
       #nearby .nb-cats{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:14px}
       #nearby .nb-cat{display:inline-flex;align-items:center;gap:4px;color:#334155}
       #nearby .nb-cat b{font-variant-numeric:tabular-nums;font-weight:600}
-      #nearby .nb-cat.zero{opacity:.3}
-      #nearby .nb-names{margin-top:6px;font-size:12px;color:#8a97a6;line-height:1.55}
+      #nearby .nb-cat.zero{opacity:.5}
+      #nearby .nb-nm{color:#1f2937;font-weight:500}
+      #nearby .nb-dm{color:#6b7280;font-variant-numeric:tabular-nums}
+      #nearby .nb-names{margin-top:6px;font-size:12px;color:#64748b;line-height:1.65}
       @keyframes nbin{to{opacity:1;transform:none}}
     </style>
     <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้ <span class="text-xs font-normal text-slate-400">มีอะไรใกล้ๆ</span></h2>
@@ -4008,19 +4012,19 @@ loadProps();
       var rings=[[1000,'1 กม.'],[3000,'3 กม.'],[5000,'5 กม.']];
       var h='';
       rings.forEach(function(rg,idx){
-        var R=rg[0];
+        var R=rg[0], prevR=idx===0?0:rings[idx-1][0];
         var cats=CAT.map(function(c){
           var d=DATA[c[0]]||{c1:0,c3:0,c5:0};
           var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
           return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
         }).join('');
         var names=[];
-        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist<=R) names.push(x); }); });
+        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist>prevR && x.dist<=R) names.push(x); }); });
         names.sort(function(a,b){ return a.dist-b.dist; });
         var seen={}, top=[];
-        for(var i=0;i<names.length && top.length<5;i++){
-          var nm=names[i].name||names[i].sub;
-          if(nm && !seen[nm]){ seen[nm]=1; top.push(nm+' <span style="opacity:.7">'+fd(names[i].dist)+'</span>'); }
+        for(var i=0;i<names.length && top.length<6;i++){
+          var nm=names[i].name;
+          if(nm && !seen[nm]){ seen[nm]=1; top.push('<span class="nb-nm">'+nm+'</span> <span class="nb-dm">'+fd(names[i].dist)+'</span>'); }
         }
         h+='<div class="nb-ring" style="animation-delay:'+(idx*0.14).toFixed(2)+'s">'
           +'<div class="nb-rlabel">'+rg[1]+'</div>'
@@ -4764,8 +4768,7 @@ def _build_nearby(lat: float, lng: float, elements: list) -> dict:
         d = _haversine_m(lat, lng, elat, elng)
         if d > _NEARBY_RADIUS:
             continue
-        cats[cat].append({"name": name or _poi_subtype(tags), "sub": _poi_subtype(tags),
-                           "dist": int(round(d)), "lat": elat, "lng": elng})
+        cats[cat].append({"name": name or _poi_subtype(tags), "dist": int(round(d))})
     out = {}
     for cat, items in cats.items():
         items.sort(key=lambda x: x["dist"])
@@ -4773,7 +4776,7 @@ def _build_nearby(lat: float, lng: float, elements: list) -> dict:
             "c1": sum(1 for i in items if i["dist"] <= 1000),
             "c3": sum(1 for i in items if i["dist"] <= 3000),
             "c5": len(items),
-            "near": items[:8],
+            "near": items[:40],          # ส่งเยอะขึ้นเพื่อให้แบ่งช่วงระยะได้
         }
     return out
 
