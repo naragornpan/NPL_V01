@@ -4788,7 +4788,7 @@ def fetch_nearby(lat: float, lng: float) -> dict:
     import urllib.error
     import urllib.parse
     import urllib.request
-    ck = f"{round(lat, 3)},{round(lng, 3)}"
+    ck = f"v2:{round(lat, 3)},{round(lng, 3)}"      # v2 = เก็บ 40 จุด/หมวด (แบ่งช่วงระยะ)
     if not DEMO_MODE:
         try:
             from core.db import connect
