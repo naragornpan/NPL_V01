@@ -2085,7 +2085,8 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
 
   {% if r.lat and r.lng %}
   <script>
-  document.addEventListener('DOMContentLoaded', function(){
+  (function(){
+  function nbInit(){
     var el=document.getElementById('nearby'); if(!el) return;
     var lat=el.getAttribute('data-lat'), lng=el.getAttribute('data-lng');
     var body=document.getElementById('nb-body');
@@ -2124,7 +2125,9 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
         if(res&&res.ok){ DATA=res.data; render(); }
         else { body.innerHTML='<span class="text-amber-600 text-sm">'+((res&&res.message)||'ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ')+'</span>'; }
       }).catch(function(){ body.innerHTML='<span class="text-amber-600 text-sm">ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ ลองรีเฟรช</span>'; });
-  });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', nbInit); else nbInit();
+  })();
   </script>
   {% endif %}
 
@@ -3889,8 +3892,10 @@ loadProps();
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 {% endif %}
-<div class="max-w-3xl mx-auto">
+<div class="max-w-6xl mx-auto">
   <a href="/market" class="text-sm brandlink">← กลับตลาดประกาศ</a>
+  <div class="mt-2 {% if d.lat and d.lng %}grid gap-5 lg:grid-cols-3 lg:items-start{% endif %}">
+  <div class="{% if d.lat and d.lng %}lg:col-span-2{% endif %}">
   <div class="sheet overflow-hidden mt-2">
     {% if d.images %}
     <div class="flex gap-1 overflow-x-auto">
@@ -3965,8 +3970,29 @@ loadProps();
     {% endif %}
   </div>
   {% endif %}
+
+  <div class="sheet p-4 mt-4">
+    <h2 class="font-semibold text-sm mb-2">ติดต่อผู้ลงประกาศ</h2>
+    {% if user_logged_in %}
+    <div class="flex flex-wrap gap-2 text-sm">
+      {% if d.contact_phone %}<a href="tel:{{ d.contact_phone }}" class="rounded-lg px-4 py-2 text-white" style="background:var(--survey)">โทร {{ d.contact_phone }}</a>{% endif %}
+      {% if d.contact_line %}<span class="rounded-lg px-4 py-2 border">LINE: {{ d.contact_line }}</span>{% endif %}
+      {% if d.contact_name %}<span class="px-2 py-2 text-slate-500">({{ d.contact_name }})</span>{% endif %}
+      {% if not d.contact_phone and not d.contact_line %}<span class="text-slate-400 text-sm py-2">ผู้ลงไม่ได้ให้ข้อมูลติดต่อ</span>{% endif %}
+    </div>
+    {% else %}
+    <div class="rounded-lg border border-dashed p-4 text-center">
+      <div class="text-sm text-slate-500 mb-2">🔒 เข้าสู่ระบบเพื่อดูเบอร์โทร / LINE ของผู้ลงประกาศ</div>
+      <a href="/login?next=/m/{{ d.id }}" class="inline-block rounded-lg px-5 py-2 text-white text-sm font-medium" style="background:var(--survey)">เข้าสู่ระบบเพื่อดูข้อมูลติดต่อ</a>
+    </div>
+    {% endif %}
+    <p class="text-[11px] text-amber-700 bg-amber-50 rounded p-2 mt-3">⚠️ ประกาศจากผู้ใช้ทั่วไป — แปลงดีไม่ได้ตรวจสอบกรรมสิทธิ์ ควรตรวจเอกสาร/ดูของจริงก่อนโอนเงินทุกครั้ง</p>
+  </div>
+  </div>{# /left col #}
+
   {% if d.lat and d.lng %}
-  <div class="sheet overflow-hidden mt-4"><div id="mmap" style="height:260px"></div></div>
+  <aside class="space-y-4 mt-4 lg:mt-0">
+  <div class="sheet overflow-hidden"><div id="mmap" style="height:260px"></div></div>
   <script>
   (function(){var el=document.getElementById('mmap');if(!el||typeof L==='undefined')return;
     var lat={{ d.lat }}, lng={{ d.lng }};
@@ -3976,9 +4002,7 @@ loadProps();
     setTimeout(function(){m.invalidateSize();},250);
   })();
   </script>
-  {% endif %}
 
-  {% if d.lat and d.lng %}
   <div class="sheet p-4 mt-4" id="nearby" data-lat="{{ d.lat }}" data-lng="{{ d.lng }}">
     <style>
       #nearby .nb-ring{border-top:1px solid var(--rule);padding-top:11px;margin-top:11px;opacity:0;transform:translateY(7px);animation:nbin .45s ease forwards}
@@ -4000,7 +4024,8 @@ loadProps();
     <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap</p>
   </div>
   <script>
-  document.addEventListener('DOMContentLoaded', function(){
+  (function(){
+  function nbInit(){
     var el=document.getElementById('nearby'); if(!el) return;
     var lat=el.getAttribute('data-lat'), lng=el.getAttribute('data-lng');
     var body=document.getElementById('nb-body');
@@ -4039,27 +4064,13 @@ loadProps();
         if(res&&res.ok){ DATA=res.data; render(); }
         else { body.innerHTML='<span class="text-amber-600 text-sm">'+((res&&res.message)||'ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ')+'</span>'; }
       }).catch(function(){ body.innerHTML='<span class="text-amber-600 text-sm">ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ ลองรีเฟรช</span>'; });
-  });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', nbInit); else nbInit();
+  })();
   </script>
+  </aside>
   {% endif %}
-
-  <div class="sheet p-4 mt-4">
-    <h2 class="font-semibold text-sm mb-2">ติดต่อผู้ลงประกาศ</h2>
-    {% if user_logged_in %}
-    <div class="flex flex-wrap gap-2 text-sm">
-      {% if d.contact_phone %}<a href="tel:{{ d.contact_phone }}" class="rounded-lg px-4 py-2 text-white" style="background:var(--survey)">โทร {{ d.contact_phone }}</a>{% endif %}
-      {% if d.contact_line %}<span class="rounded-lg px-4 py-2 border">LINE: {{ d.contact_line }}</span>{% endif %}
-      {% if d.contact_name %}<span class="px-2 py-2 text-slate-500">({{ d.contact_name }})</span>{% endif %}
-      {% if not d.contact_phone and not d.contact_line %}<span class="text-slate-400 text-sm py-2">ผู้ลงไม่ได้ให้ข้อมูลติดต่อ</span>{% endif %}
-    </div>
-    {% else %}
-    <div class="rounded-lg border border-dashed p-4 text-center">
-      <div class="text-sm text-slate-500 mb-2">🔒 เข้าสู่ระบบเพื่อดูเบอร์โทร / LINE ของผู้ลงประกาศ</div>
-      <a href="/login?next=/m/{{ d.id }}" class="inline-block rounded-lg px-5 py-2 text-white text-sm font-medium" style="background:var(--survey)">เข้าสู่ระบบเพื่อดูข้อมูลติดต่อ</a>
-    </div>
-    {% endif %}
-    <p class="text-[11px] text-amber-700 bg-amber-50 rounded p-2 mt-3">⚠️ ประกาศจากผู้ใช้ทั่วไป — แปลงดีไม่ได้ตรวจสอบกรรมสิทธิ์ ควรตรวจเอกสาร/ดูของจริงก่อนโอนเงินทุกครั้ง</p>
-  </div>
+  </div>{# /grid #}
 </div>
 <script>
 function baMove(r){var el=r.closest('.ba');el.querySelector('.ba-aw').style.width=r.value+'%';el.querySelector('.ba-line').style.left=r.value+'%';}
