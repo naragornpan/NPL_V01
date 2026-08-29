@@ -1427,6 +1427,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/{{ tk }}" class="navlink whitespace-nowrap">ทรัพย์</a>
       <a href="/map{{ tk }}" class="navlink whitespace-nowrap">แผนที่</a>
       <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
+      <a href="/auction-results" class="navlink whitespace-nowrap">จบประมูล</a>
       <a href="/articles" class="navlink whitespace-nowrap">บทความ</a>
       <a href="/market" class="navlink whitespace-nowrap">ตลาดขาย-เช่า</a>
       {% if any_login %}
@@ -2218,6 +2219,20 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
        style="color:var(--survey)">ทำไมได้เกรดนี้ →</a>
     {% endif %}
   </div>
+
+  {% if auc_result %}
+  <div class="sheet p-4" style="border-left:4px solid {{ '#10b981' if auc_result.is_sold else '#94a3b8' }}">
+    <div class="text-xs text-slate-500">🔨 ผลการประมูล · นัดขาย {{ auc_result.date_label }}</div>
+    {% if auc_result.is_sold %}
+    <div class="text-xl font-bold mt-0.5" style="color:var(--survey-deep)">✓ ขายได้ {{ "{:,.0f}".format(auc_result.sold_price or 0) }} บาท</div>
+    {% if auc_result.pct is not none %}<div class="text-sm {{ 'text-emerald-600' if auc_result.pct>=0 else 'text-red-500' }}">{{ '+' if auc_result.pct>=0 else '' }}{{ auc_result.pct }}% จากราคาประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }}</div>{% endif %}
+    {% else %}
+    <div class="text-lg font-semibold text-slate-600 mt-0.5">{{ auc_result.result or 'ไม่มีผู้สู้ราคา' }}</div>
+    <div class="text-xs text-slate-400">ราคาประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }} บาท</div>
+    {% endif %}
+    <a href="/auction-results" class="text-xs brandlink inline-block mt-1.5">ดูสรุปผลจบประมูลทั้งหมด →</a>
+  </div>
+  {% endif %}
 
   {% if r.lat and r.lng %}
   <div class="sheet p-4" id="nearby" data-lat="{{ r.lat }}" data-lng="{{ r.lng }}">
@@ -4137,6 +4152,97 @@ window.doRenovate=function(lid){
 </script>
 {% endblock %}
 """,
+"auction_results.html": """
+{% extends "layout.html" %}{% block body %}
+<section class="mb-4 rounded-2xl overflow-hidden relative" style="background:linear-gradient(135deg,var(--ink),var(--survey-deep))">
+  <div class="relative px-5 py-6 text-white">
+    <div class="text-[11px] tracking-widest uppercase font-semibold" style="color:rgba(255,255,255,.7)">รายงานผลการขายทอดตลาด · กรมบังคับคดี</div>
+    <h1 class="display text-2xl font-bold mt-1">จบประมูลแล้ว — ขายที่ราคาเท่าไหร่</h1>
+    <p class="text-white/80 text-sm mt-1">ทรัพย์ LED ที่ครบกำหนดประมูล พร้อมผลจริง (ขายได้/ไม่มีผู้สู้ราคา) จัดตามวันขาย</p>
+    <div class="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+      <div><span class="text-white/60">จบประมูล</span> <b class="text-lg">{{ "{:,}".format(stats.n or 0) }}</b> รายการ</div>
+      <div><span class="text-white/60">ขายได้</span> <b class="text-lg text-emerald-300">{{ "{:,}".format(stats.sold or 0) }}</b></div>
+      <div><span class="text-white/60">มูลค่าขายรวม</span> <b class="text-lg">{{ "{:,.0f}".format(stats.sum_sold or 0) }}</b> บาท</div>
+    </div>
+  </div>
+</section>
+
+<form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
+  <div class="flex gap-1">
+    {% for v,lbl in [('','ทั้งหมด'),('sold','ขายได้'),('nobid','ไม่มีผู้สู้ราคา')] %}
+    <a href="/auction-results?result={{ v }}{% if province %}&province={{ province }}{% endif %}"
+       class="px-3 py-1.5 rounded-lg border {% if result==v %}text-white{% else %}text-slate-600 hover:bg-slate-50{% endif %}"
+       style="{% if result==v %}background:var(--survey);border-color:var(--survey){% endif %}">{{ lbl }}</a>
+    {% endfor %}
+  </div>
+  <label class="ml-auto">จังหวัด
+    <select name="province" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
+      <option value="">ทุกจังหวัด</option>
+      {% for p in provinces %}<option value="{{ p }}" {% if p==province %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select></label>
+  {% if result %}<input type="hidden" name="result" value="{{ result }}">{% endif %}
+</form>
+
+{% if not groups %}
+<div class="sheet p-10 text-center text-slate-500">
+  ยังไม่มีผลจบประมูลในเงื่อนไขนี้ — ระบบดึงผลจากกรมบังคับคดี (ย้อนหลัง 6 เดือน) หลังทรัพย์ครบกำหนดขาย
+</div>
+{% else %}
+{% for grp in groups %}
+<div class="flex items-center gap-2 mt-5 mb-2">
+  <h2 class="font-semibold text-slate-700">วันขาย {{ grp.label }}</h2>
+  <span class="text-xs text-slate-400">{{ grp.rows|length }} รายการ</span>
+  <span class="flex-1 border-t" style="border-color:var(--rule)"></span>
+</div>
+<div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+  {% for r in grp.rows %}
+  <a href="/p/led_auction/{{ r.ref }}" class="sheet p-3.5 block hover:shadow-md transition">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <div class="font-medium text-sm line-clamp-1">{{ type_labels.get(r.property_type, r.property_type_th or 'ทรัพย์') }}
+          {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}</div>
+        <div class="text-xs text-slate-400 mt-0.5">{{ r.province or '' }}{% if r.court %} · ศาล{{ r.court }}{% endif %}</div>
+      </div>
+      {% if r.grade %}<span class="seal g-{{ r.grade }}">{{ r.grade }}</span>{% endif %}
+    </div>
+    <div class="mt-2.5 flex items-end justify-between gap-2">
+      <div>
+        <div class="text-[11px] text-slate-400">ราคาประเมิน</div>
+        <div class="text-sm text-slate-600">{{ "{:,.0f}".format(r.appraised_price or 0) }}</div>
+      </div>
+      {% if r.is_sold %}
+      <div class="text-right">
+        <span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-800">✓ ขายได้</span>
+        <div class="text-lg font-bold leading-tight mt-0.5" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.sold_price or 0) }}</div>
+        {% if r.pct is not none %}<div class="text-[11px] {{ 'text-emerald-600' if r.pct>=0 else 'text-red-500' }}">{{ '+' if r.pct>=0 else '' }}{{ r.pct }}% จากประเมิน</div>{% endif %}
+      </div>
+      {% else %}
+      <div class="text-right">
+        <span class="text-[11px] px-2 py-0.5 rounded-full font-medium
+          {% if 'ถอน' in r.result %}bg-slate-200 text-slate-600
+          {% elif 'นัดที่เหลือ' in r.result %}bg-amber-100 text-amber-800
+          {% else %}bg-slate-100 text-slate-500{% endif %}">{{ r.result or 'ไม่มีผู้สู้ราคา' }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endfor %}
+
+{% if pages > 1 %}
+<div class="flex justify-center gap-1 mt-6 text-sm">
+  {% for p in range(1, pages+1) %}
+  {% if p==page %}<span class="px-3 py-1.5 rounded-lg text-white" style="background:var(--survey)">{{ p }}</span>
+  {% else %}<a href="/auction-results?page={{ p }}{% if result %}&result={{ result }}{% endif %}{% if province %}&province={{ province }}{% endif %}" class="px-3 py-1.5 rounded-lg border hover:bg-slate-50">{{ p }}</a>{% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+
+<p class="text-[11px] text-slate-400 mt-6 text-center">ข้อมูลผลการขายจาก รายงานผลการขายทอดตลาด กรมบังคับคดี · จับคู่กับทรัพย์ที่ระบบเก็บก่อนประมูลด้วยราคาประเมิน · ควรตรวจสอบกับกรมฯ อีกครั้งก่อนตัดสินใจ</p>
+{% endblock %}
+""",
 "my_listings.html": """
 {% extends "layout.html" %}{% block body %}
 <div class="flex items-center justify-between mb-4">
@@ -4612,6 +4718,26 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             if guessed:
                 r["province"] = guessed
                 prov_inferred = True
+    # ผลจบประมูล (ถ้าทรัพย์นี้ครบกำหนดขายแล้ว และดึงผลจาก LED มาแล้ว)
+    auc_result = None
+    if source_code == "led_auction" and not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                _ar = conn.execute(
+                    "select sale_date, result, is_sold, sold_price, appraised_price "
+                    "from led_auction_results where matched_ref = %s "
+                    "order by sale_date desc limit 1", (ref,)).fetchone()
+            if _ar:
+                auc_result = dict(_ar)
+                auc_result["date_label"] = _thai_date(auc_result.get("sale_date"))
+                if auc_result.get("is_sold") and auc_result.get("appraised_price") \
+                        and auc_result.get("sold_price"):
+                    auc_result["pct"] = round(
+                        (float(auc_result["sold_price"]) - float(auc_result["appraised_price"]))
+                        / float(auc_result["appraised_price"]) * 100)
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("ดึงผลประมูลไม่สำเร็จ: %s", str(exc)[:100])
     _op = r.get("opening_price")
     _usm = r.get("usable_area_sqm")
     _pps_m = round(_op / _usm) if _op and _usm else None          # ราคา/ตร.ม. (คอนโด/ห้องชุด)
@@ -4709,7 +4835,7 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
     uid = current_user(request)
     is_fav = (source_code, ref) in user_fav_pairs(uid)
     return env.get_template("detail.html").render(
-        title=r["title"], r=r, specs=specs,
+        title=r["title"], r=r, specs=specs, auc_result=auc_result,
         comps=comp_blocks[0] if comp_blocks else None,
         dupes=dupes, dupe_cheapest=dupe_cheapest, is_fav=is_fav,
         contact_line_url=current_settings().get("contact_line_url"),
@@ -5885,6 +6011,86 @@ def market(request: Request, kind: str = Query(""), province: str = Query(""),
         ptype=ptype, min_price=min_price_v, max_price=max_price_v,
         provinces=provinces, canonical=_abs_url(request, "/market"),
         og_desc="ประกาศขาย/ให้เช่าบ้าน ที่ดิน คอนโด จากผู้ลงประกาศโดยตรงบนแปลงดี",
+        **ubase(request))
+
+
+_THAI_MONTHS = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+                "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+
+
+def _thai_date(d) -> str:
+    if not d:
+        return "-"
+    return f"{d.day} {_THAI_MONTHS[d.month]} {d.year + 543}"
+
+
+@app.get("/auction-results", response_class=HTMLResponse)
+def auction_results(request: Request, result: str = Query(""),
+                    province: str = Query(""), page: int = Query(1, ge=1)):
+    """หน้าสรุป "จบประมูล" — ผลการขายทอดตลาด LED (ราคาจบ/ไม่มีผู้สู้ราคา) จัดตามวันขาย"""
+    groups: list = []
+    total = 0
+    provinces: list = []
+    stats = {"n": 0, "sold": 0, "sum_sold": 0}
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            cte = ("""with latest as (
+                        select distinct on (matched_ref) matched_ref as ref, sale_date, result,
+                               is_sold, sold_price, appraised_price, property_type_th, court, deed
+                          from led_auction_results where matched_ref is not null
+                         order by matched_ref, sale_date desc)""")
+            conds = ["1=1"]
+            params: list = []
+            if result == "sold":
+                conds.append("l.is_sold")
+            elif result == "nobid":
+                conds.append("not l.is_sold")
+            if province:
+                conds.append("g.province = %s"); params.append(province)
+            where = " and ".join(conds)
+            ps = 60
+            off = (page - 1) * ps
+            join = ("left join v_listings_with_grade g "
+                    "on g.source_code='led_auction' and g.external_ref = l.ref")
+            with connect() as conn:
+                total = conn.execute(
+                    f"{cte} select count(*) n from latest l {join} where {where}",
+                    tuple(params)).fetchone()["n"]
+                rows = [dict(r) for r in conn.execute(f"""
+                    {cte}
+                    select l.ref, l.sale_date, l.result, l.is_sold, l.sold_price,
+                           l.appraised_price, l.property_type_th, l.court,
+                           g.province, g.district, g.subdistrict, g.property_type, g.grade
+                      from latest l {join}
+                     where {where}
+                     order by l.sale_date desc, l.is_sold desc, l.sold_price desc nulls last
+                     limit {ps} offset {off}""", tuple(params)).fetchall()]
+                st = conn.execute(
+                    f"{cte} select count(*) n, count(*) filter (where is_sold) sold, "
+                    f"coalesce(sum(sold_price) filter (where is_sold),0) sum_sold from latest l"
+                ).fetchone()
+                stats = dict(st)
+                provinces = [r["province"] for r in conn.execute(
+                    f"{cte} select distinct g.province from latest l {join} "
+                    f"where g.province is not null order by 1").fetchall()]
+            # เตรียมข้อมูลแสดง: %ต่างจากประเมิน + จัดกลุ่มตามวันขาย
+            for r in rows:
+                ap, sp = r.get("appraised_price"), r.get("sold_price")
+                r["pct"] = (round((float(sp) - float(ap)) / float(ap) * 100)
+                            if r["is_sold"] and ap and sp else None)
+            from itertools import groupby
+            for d, grp in groupby(rows, key=lambda x: x["sale_date"]):
+                groups.append({"label": _thai_date(d), "rows": list(grp)})
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("auction-results ล้มเหลว (รัน migration 043 + led_results.py?): %s",
+                        str(exc)[:150])
+    pages = max(1, -(-total // 60))
+    return env.get_template("auction_results.html").render(
+        title="ผลจบประมูล ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
+        page=page, pages=pages, result=result, province=province, provinces=provinces,
+        stats=stats, canonical=_abs_url(request, "/auction-results"),
+        og_desc="ผลการขายทอดตลาดกรมบังคับคดี — ทรัพย์ไหนขายจบที่ราคาเท่าไหร่ หรือไม่มีผู้สู้ราคา ดูตามวันขาย",
         **ubase(request))
 
 
