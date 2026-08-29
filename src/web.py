@@ -4209,6 +4209,41 @@ window.doRenovate=function(lid){
   </div>
 </section>
 
+{% if astats.rounds %}
+<div class="sheet p-4 mb-4">
+  <h2 class="font-semibold mb-1">📊 กลยุทธ์: รอประมูลนัดไหนคุ้ม</h2>
+  <p class="text-xs text-slate-500 mb-3">จากผลจริง {{ "{:,}".format(astats.n) }} รายการที่จับคู่ได้ (ขายออก {{ astats.pct }}%) — ยิ่งนัดหลัง ราคายิ่งลด แต่ของดีมักถูกซื้อไปในนัดต้น ๆ</p>
+  <div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead><tr class="text-xs text-slate-400 text-left">
+      <th class="py-1 font-normal">นัด</th><th class="font-normal">ทรัพย์</th>
+      <th class="font-normal w-2/5">% ขายได้</th><th class="font-normal text-right">ราคาจบเทียบประเมิน</th>
+    </tr></thead>
+    <tbody>
+    {% for r in astats.rounds %}
+    <tr class="border-t" style="border-color:var(--rule)">
+      <td class="py-2 font-medium whitespace-nowrap">นัด {{ r.round }}</td>
+      <td class="text-slate-500 tabular-nums">{{ r.n }}</td>
+      <td class="py-2">
+        <div class="flex items-center gap-2">
+          <div class="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden max-w-[160px]">
+            <div class="h-full rounded-full" style="width:{{ r.pct }}%;background:var(--survey)"></div>
+          </div>
+          <span class="text-xs tabular-nums text-slate-500">{{ r.pct }}%</span>
+        </div>
+      </td>
+      <td class="text-right tabular-nums font-medium {% if r.med is not none and r.med < 0 %}text-emerald-600{% elif r.med is not none %}text-slate-500{% else %}text-slate-300{% endif %}">
+        {% if r.med is not none %}{{ '+' if r.med>=0 else '' }}{{ r.med }}%{% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="text-[11px] text-slate-400 mt-2">% ขายได้ = สัดส่วนที่ขายออกในนัดนั้น · ราคาจบเทียบประเมิน = ค่ากลาง (ติดลบ = ถูกกว่าประเมิน) · ตัวเลขจะแม่นขึ้นเมื่อดึงผลครบทุกหน่วยงาน</p>
+</div>
+{% endif %}
+
 <form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
   <div class="flex gap-1">
     {% for v,lbl in [('','ทั้งหมด'),('sold','ขายได้'),('nobid','ไม่มีผู้สู้ราคา')] %}
@@ -6074,6 +6109,73 @@ def _thai_date(d) -> str:
     return f"{d.day} {_THAI_MONTHS[d.month]} {d.year + 543}"
 
 
+_AUC_STATS_CACHE: dict = {"t": 0.0, "data": None}
+_AUC_STATS_TTL = 1800
+
+
+def _auction_stats() -> dict:
+    """สถิติผลประมูลตาม "นัด" — จำนวน/‌%ขายได้/ราคาจบเทียบประเมิน เพื่อวางกลยุทธ์ (cache 30 นาที)"""
+    import time as _t
+    if _AUC_STATS_CACHE["data"] is not None and _t.time() - _AUC_STATS_CACHE["t"] < _AUC_STATS_TTL:
+        return _AUC_STATS_CACHE["data"]
+    import datetime as _dt
+
+    def _bud(s):
+        try:
+            return _dt.date(int(s[:4]) - 543, int(s[4:6]), int(s[6:8]))
+        except (ValueError, TypeError):
+            return None
+
+    stats = {"rounds": [], "n": 0, "sold": 0, "pct": 0, "maxn": 1}
+    try:
+        from collections import defaultdict
+        from core.db import connect
+        with connect() as conn:
+            rows = conn.execute("""
+                select ar.sale_date, ar.is_sold, ar.sold_price, ar.appraised_price,
+                       ls.raw_fields->'_open_post' op
+                  from led_auction_results ar
+                  join listing_snapshots ls on ls.source_code='led_auction'
+                       and ls.external_ref = ar.matched_ref
+                 where ar.matched_ref is not null and ar.appraised_price > 0
+            """).fetchall()
+        agg = defaultdict(lambda: {"n": 0, "sold": 0, "disc": []})
+        for r in rows:
+            op = r["op"] or {}
+            rnd = None
+            for i in range(1, 9):
+                bd = op.get(f"biddate{i}")
+                if bd and _bud(bd) == r["sale_date"]:
+                    rnd = i
+                    break
+            if not rnd:
+                continue
+            a = agg[rnd]
+            a["n"] += 1
+            if r["is_sold"] and r["sold_price"]:
+                a["sold"] += 1
+                a["disc"].append((float(r["sold_price"]) - float(r["appraised_price"]))
+                                 / float(r["appraised_price"]) * 100)
+        out = []
+        tn = ts = 0
+        for rnd in sorted(agg):
+            a = agg[rnd]
+            disc = sorted(a["disc"])
+            med = round(disc[len(disc) // 2]) if disc else None
+            out.append({"round": rnd, "n": a["n"], "sold": a["sold"],
+                        "pct": round(100 * a["sold"] / a["n"]) if a["n"] else 0,
+                        "med": med})
+            tn += a["n"]
+            ts += a["sold"]
+        stats = {"rounds": out, "n": tn, "sold": ts,
+                 "pct": round(100 * ts / tn) if tn else 0,
+                 "maxn": max((x["n"] for x in out), default=1)}
+    except Exception as exc:                                        # noqa: BLE001
+        log.warning("auction stats ล้มเหลว: %s", str(exc)[:120])
+    _AUC_STATS_CACHE.update(t=_t.time(), data=stats)
+    return stats
+
+
 @app.get("/auction-results", response_class=HTMLResponse)
 def auction_results(request: Request, result: str = Query(""),
                     province: str = Query(""), page: int = Query(1, ge=1)):
@@ -6141,7 +6243,7 @@ def auction_results(request: Request, result: str = Query(""),
     return env.get_template("auction_results.html").render(
         title="ผลจบประมูล ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
         page=page, pages=pages, result=result, province=province, provinces=provinces,
-        stats=stats, canonical=_abs_url(request, "/auction-results"),
+        stats=stats, astats=_auction_stats(), canonical=_abs_url(request, "/auction-results"),
         og_desc="ผลการขายทอดตลาดกรมบังคับคดี — ทรัพย์ไหนขายจบที่ราคาเท่าไหร่ หรือไม่มีผู้สู้ราคา ดูตามวันขาย",
         **ubase(request))
 
