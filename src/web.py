@@ -3613,55 +3613,57 @@ loadProps();
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <div class="max-w-2xl mx-auto">
-  <h1 class="text-xl font-semibold mb-1">ลงประกาศขาย / ให้เช่า <span class="text-sm font-normal text-slate-500">ฟรี</span></h1>
-  <p class="text-sm text-slate-500 mb-4">ประกาศจะขึ้นเว็บหลังทีมงานตรวจอนุมัติ · ดูสถานะได้ที่ <a href="/my-listings" class="brandlink">ประกาศของฉัน</a></p>
+  <h1 class="text-xl font-semibold mb-1">{% if edit_id %}✏️ แก้ไขประกาศ{% else %}ลงประกาศขาย / ให้เช่า <span class="text-sm font-normal text-slate-500">ฟรี</span>{% endif %}</h1>
+  <p class="text-sm text-slate-500 mb-4">{% if edit_id %}แก้ไขข้อมูลแล้วกดบันทึกด้านล่าง · กลับไปที่ <a href="/my-listings" class="brandlink">ประกาศของฉัน</a>{% else %}ประกาศจะขึ้นเว็บหลังทีมงานตรวจอนุมัติ · ดูสถานะได้ที่ <a href="/my-listings" class="brandlink">ประกาศของฉัน</a>{% endif %}</p>
   <form method="post" action="/sell" class="space-y-4">
+    {% if edit_id %}<input type="hidden" name="edit_id" value="{{ edit_id }}">{% endif %}
     <div class="sheet p-4 space-y-3">
       <div class="flex gap-2">
         {% for k,v in [('sale','ขาย'),('rent','ให้เช่า')] %}
         <label class="flex-1 border rounded-lg px-3 py-2 text-center text-sm cursor-pointer">
-          <input type="radio" name="listing_kind" value="{{ k }}" {% if k=='sale' %}checked{% endif %}> {{ v }}</label>
+          <input type="radio" name="listing_kind" value="{{ k }}" {% if (f.listing_kind or 'sale')==k %}checked{% endif %}> {{ v }}</label>
         {% endfor %}
       </div>
       <label class="block text-sm">ชื่อประกาศ *
         <input name="title" required maxlength="200" placeholder="เช่น บ้านเดี่ยว 2 ชั้น หมู่บ้าน... พร้อมอยู่"
-          class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+          value="{{ f.title or '' }}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
       <div class="grid grid-cols-2 gap-3">
         <label class="block text-sm">ประเภท
           <select name="property_type" class="mt-1 w-full border rounded-lg px-2 py-2">
             <option value="">-</option>
-            {% for k,v in type_labels.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+            {% for k,v in type_labels.items() %}<option value="{{ k }}" {% if k==f.property_type %}selected{% endif %}>{{ v }}</option>{% endfor %}
           </select></label>
         <label class="block text-sm" id="pricelbl">ราคา (บาท)
-          <input name="price" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+          <input name="price" type="number" value="{{ f.price|int if f.price else '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
       <div class="grid grid-cols-3 gap-3">
         <label class="block text-sm">มัดจำ (เช่า)
-          <input name="deposit" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+          <input name="deposit" type="number" value="{{ f.deposit|int if f.deposit else '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
         <label class="block text-sm">เนื้อที่ (ตร.ว.)
-          <input name="land_area_sqwa" type="number" step="0.1" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+          <input name="land_area_sqwa" type="number" step="0.1" value="{{ f.land_area_sqwa or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
         <label class="block text-sm">ใช้สอย (ตร.ม.)
-          <input name="usable_area_sqm" type="number" step="0.1" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+          <input name="usable_area_sqm" type="number" step="0.1" value="{{ f.usable_area_sqm or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
       <div class="grid grid-cols-3 gap-3">
-        <label class="block text-sm">นอน<input name="bedrooms" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
-        <label class="block text-sm">น้ำ<input name="bathrooms" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
-        <label class="block text-sm">จอดรถ<input name="parking" type="number" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">นอน<input name="bedrooms" type="number" value="{{ f.bedrooms or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">น้ำ<input name="bathrooms" type="number" value="{{ f.bathrooms or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">จอดรถ<input name="parking" type="number" value="{{ f.parking or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
       <div id="rentonly" class="hidden">
         <label class="block text-sm">🐾 การเลี้ยงสัตว์ <span class="text-xs text-slate-400">(สำหรับปล่อยเช่า)</span>
           <select name="pets_allowed" class="mt-1 w-full border rounded-lg px-2 py-2">
             <option value="">— ไม่ระบุ —</option>
-            <option value="yes">อนุญาตให้เลี้ยงสัตว์ได้</option>
-            <option value="no">ไม่อนุญาตให้เลี้ยงสัตว์</option>
-            <option value="ask">สอบถามเจ้าของก่อน</option>
+            <option value="yes" {% if f.pets_allowed=='yes' %}selected{% endif %}>อนุญาตให้เลี้ยงสัตว์ได้</option>
+            <option value="no" {% if f.pets_allowed=='no' %}selected{% endif %}>ไม่อนุญาตให้เลี้ยงสัตว์</option>
+            <option value="ask" {% if f.pets_allowed=='ask' %}selected{% endif %}>สอบถามเจ้าของก่อน</option>
           </select></label>
       </div>
     </div>
     <div class="sheet p-4 space-y-3">
       <div class="grid grid-cols-3 gap-3">
         <label class="block text-sm">จังหวัด
-          <select name="province" id="sd-prov" class="mt-1 w-full border rounded-lg px-2 py-2 bg-white">
+          <select name="province" id="sd-prov" class="mt-1 w-full border rounded-lg px-2 py-2 bg-white"
+            data-init-prov="{{ f.province or '' }}" data-init-dist="{{ f.district or '' }}" data-init-sub="{{ f.subdistrict or '' }}">
             <option value="">— เลือกจังหวัด —</option>
           </select></label>
         <label class="block text-sm">อำเภอ/เขต
@@ -3673,7 +3675,7 @@ loadProps();
             <option value="">— เลือกตำบล —</option>
           </select></label>
       </div>
-      <label class="block text-sm">ที่อยู่/จุดสังเกต<input name="address_raw" maxlength="300" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+      <label class="block text-sm">ที่อยู่/จุดสังเกต<input name="address_raw" maxlength="300" value="{{ f.address_raw or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       <div>
         <div class="text-sm mb-1">ปักหมุดตำแหน่ง <span class="text-xs text-slate-400">— คลิกบนแผนที่เพื่อวางหมุด (ลากปรับได้)</span></div>
         <div class="flex gap-2 mb-1 items-center">
@@ -3681,10 +3683,10 @@ loadProps();
           <span id="latlngtext" class="text-xs text-slate-500"></span>
         </div>
         <div id="pickmap" class="rounded-lg border" style="height:280px"></div>
-        <input type="hidden" name="lat" id="lat"><input type="hidden" name="lng" id="lng">
+        <input type="hidden" name="lat" id="lat" value="{{ f.lat or '' }}"><input type="hidden" name="lng" id="lng" value="{{ f.lng or '' }}">
       </div>
       <label class="block text-sm">รายละเอียด
-        <textarea name="description" rows="4" maxlength="4000" class="mt-1 w-full border rounded-lg px-3 py-2" placeholder="สภาพทรัพย์ จุดเด่น เฟอร์นิเจอร์ เงื่อนไข ฯลฯ"></textarea></label>
+        <textarea name="description" rows="4" maxlength="4000" class="mt-1 w-full border rounded-lg px-3 py-2" placeholder="สภาพทรัพย์ จุดเด่น เฟอร์นิเจอร์ เงื่อนไข ฯลฯ">{{ f.description or '' }}</textarea></label>
     </div>
     <div class="sheet p-4 space-y-2">
       <div class="text-sm font-medium">รูปภาพ (สูงสุด 12 รูป)</div>
@@ -3694,40 +3696,58 @@ loadProps();
       {% else %}
       <div class="text-xs text-amber-700 bg-amber-50 rounded p-2">ยังไม่ได้เปิดระบบอัปโหลดรูป (แอดมินตั้งค่า Supabase Storage) — ลงประกาศแบบไม่มีรูปก่อนได้</div>
       {% endif %}
-      <input type="hidden" name="image_urls" id="image_urls">
+      <input type="hidden" name="image_urls" id="image_urls" value="{{ f.images|join(',') if f.images else '' }}">
     </div>
     <div class="sheet p-4 space-y-3">
       <div class="text-sm font-medium">ข้อมูลติดต่อ</div>
       <div class="grid grid-cols-3 gap-3">
-        <label class="block text-sm">ชื่อผู้ติดต่อ<input name="contact_name" maxlength="100" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
-        <label class="block text-sm">เบอร์โทร <span class="text-red-500">*</span><input name="contact_phone" required maxlength="40" inputmode="tel" placeholder="08x-xxx-xxxx" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
-        <label class="block text-sm">LINE ID<input name="contact_line" maxlength="100" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">ชื่อผู้ติดต่อ<input name="contact_name" maxlength="100" value="{{ f.contact_name or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">เบอร์โทร <span class="text-red-500">*</span><input name="contact_phone" required maxlength="40" inputmode="tel" placeholder="08x-xxx-xxxx" value="{{ f.contact_phone or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
+        <label class="block text-sm">LINE ID<input name="contact_line" maxlength="100" value="{{ f.contact_line or '' }}" class="mt-1 w-full border rounded-lg px-2 py-2"></label>
       </div>
       <p class="text-[11px] text-slate-400">ต้องกรอกเบอร์โทรเพื่อยืนยันตัวตนผู้ลงประกาศ · ประกาศจะแสดงหลังทีมงานตรวจอนุมัติ</p>
     </div>
-    <button class="w-full rounded-lg px-4 py-3 text-white font-medium" style="background:var(--survey)">ส่งประกาศเพื่อรออนุมัติ</button>
+    <button class="w-full rounded-lg px-4 py-3 text-white font-medium" style="background:var(--survey)">{% if edit_id %}💾 บันทึกการแก้ไข{% else %}ส่งประกาศเพื่อรออนุมัติ{% endif %}</button>
     <p class="text-[11px] text-slate-400 text-center">การลงประกาศถือว่ายอมรับ <a href="/terms" class="brandlink">เงื่อนไข</a> — ห้ามประกาศเท็จ/หลอกลวง</p>
   </form>
 </div>
 <script>
 (function(){
-  var inp=document.getElementById('imgfile'); if(!inp) return;
-  var urls=[], box=document.getElementById('thumbs'), hidden=document.getElementById('image_urls');
-  inp.addEventListener('change',function(){
-    Array.prototype.forEach.call(inp.files,function(file){
-      if(urls.length>=12){return;}
-      if(file.size>6*1024*1024){alert('รูปใหญ่เกิน 6MB: '+file.name);return;}
-      var ph=document.createElement('div'); ph.className='text-[11px] text-slate-400'; ph.textContent='กำลังอัปโหลด…'; box.appendChild(ph);
-      fetch('/api/upload-image',{method:'POST',headers:{'Content-Type':file.type},body:file})
-      .then(function(r){if(r.status===401){location.href='/login?next=/sell';return null;}return r.json();})
-      .then(function(d){ if(!d)return;
-        if(d.ok){urls.push(d.url); hidden.value=urls.join(',');
-          ph.innerHTML='<img src="'+d.url+'" style="width:84px;height:84px;object-fit:cover;border-radius:8px">';
-        } else { ph.textContent='ไม่สำเร็จ'+(d.message?': '+d.message:''); }
-      }).catch(function(){ph.textContent='อัปโหลดไม่สำเร็จ';});
+  var box=document.getElementById('thumbs'), hidden=document.getElementById('image_urls');
+  if(!hidden) return;
+  var urls = hidden.value ? hidden.value.split(',').filter(Boolean) : [];
+  function sync(){ hidden.value=urls.join(','); }
+  function render(){
+    if(!box) return;
+    box.innerHTML='';
+    urls.forEach(function(u,idx){
+      var w=document.createElement('div'); w.style.position='relative';
+      var im=document.createElement('img'); im.src=u;
+      im.style.cssText='width:84px;height:84px;object-fit:cover;border-radius:8px;display:block';
+      var b=document.createElement('button'); b.type='button'; b.textContent='×'; b.title='ลบรูป';
+      b.style.cssText='position:absolute;top:-6px;right:-6px;background:#ef4444;color:#fff;border:none;border-radius:999px;width:20px;height:20px;line-height:18px;font-size:13px;cursor:pointer';
+      b.addEventListener('click',function(){ urls.splice(idx,1); sync(); render(); });
+      w.appendChild(im); w.appendChild(b); box.appendChild(w);
     });
-    inp.value='';
-  });
+  }
+  render();
+  var inp=document.getElementById('imgfile');
+  if(inp){
+    inp.addEventListener('change',function(){
+      Array.prototype.forEach.call(inp.files,function(file){
+        if(urls.length>=12){alert('ได้สูงสุด 12 รูป');return;}
+        if(file.size>6*1024*1024){alert('รูปใหญ่เกิน 6MB: '+file.name);return;}
+        var ph=document.createElement('div'); ph.className='text-[11px] text-slate-400'; ph.textContent='กำลังอัปโหลด…'; if(box) box.appendChild(ph);
+        fetch('/api/upload-image',{method:'POST',headers:{'Content-Type':file.type},body:file})
+        .then(function(r){if(r.status===401){location.href='/login?next=/sell';return null;}return r.json();})
+        .then(function(d){ if(box&&ph.parentNode) box.removeChild(ph); if(!d)return;
+          if(d.ok){urls.push(d.url); sync(); render();}
+          else { alert('อัปโหลดไม่สำเร็จ'+(d.message?': '+d.message:'')); }
+        }).catch(function(){ if(box&&ph.parentNode) box.removeChild(ph); alert('อัปโหลดไม่สำเร็จ');});
+      });
+      inp.value='';
+    });
+  }
 })();
 </script>
 <script>
@@ -3748,6 +3768,8 @@ loadProps();
     save(lat,lng);
   }
   map.on('click',function(e){setPin(e.latlng.lat,e.latlng.lng);});
+  var ila=parseFloat(document.getElementById('lat').value), iln=parseFloat(document.getElementById('lng').value);
+  if(!isNaN(ila)&&!isNaN(iln)){ map.setView([ila,iln],16); setPin(ila,iln); }
   window.useMyLoc=function(){
     if(!navigator.geolocation){alert('เบราว์เซอร์ไม่รองรับระบุตำแหน่ง');return;}
     navigator.geolocation.getCurrentPosition(function(pos){
@@ -3780,14 +3802,15 @@ loadProps();
       dist=document.getElementById('sd-dist'),
       sub =document.getElementById('sd-sub');
   if(!prov) return;
+  var IP=prov.getAttribute('data-init-prov')||'', ID=prov.getAttribute('data-init-dist')||'', IS=prov.getAttribute('data-init-sub')||'';
   function fill(sel, list, ph){
     sel.innerHTML='';
     var o0=document.createElement('option'); o0.value=''; o0.textContent=ph; sel.appendChild(o0);
     list.forEach(function(v){var o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o);});
   }
-  function toText(sel){                       // สำรอง: ถ้าโหลดข้อมูลไม่ได้ ให้พิมพ์เอง
+  function toText(sel, val){                   // สำรอง: ถ้าโหลดข้อมูลไม่ได้ ให้พิมพ์เอง
     var t=document.createElement('input'); t.type='text'; t.name=sel.getAttribute('name');
-    t.maxLength=60; t.className=sel.className;
+    t.maxLength=60; t.className=sel.className; if(val) t.value=val;
     sel.parentNode.replaceChild(t, sel);
   }
   fetch('/api/th-geo.json').then(function(r){return r.json();}).then(function(GEO){
@@ -3801,7 +3824,17 @@ loadProps();
       var ss = (prov.value && dist.value) ? (GEO[prov.value][dist.value]||[]) : [];
       fill(sub, ss, '— เลือกตำบล —'); sub.disabled = ss.length===0;
     });
-  }).catch(function(){ toText(prov); toText(dist); toText(sub); });
+    // เติมค่าเดิมตอนแก้ไขประกาศ
+    if(IP && GEO[IP]){
+      prov.value=IP;
+      var ds=Object.keys(GEO[IP]); fill(dist, ds, '— เลือกอำเภอ —'); dist.disabled=ds.length===0;
+      if(ID && GEO[IP][ID]){
+        dist.value=ID;
+        var ss=GEO[IP][ID]||[]; fill(sub, ss, '— เลือกตำบล —'); sub.disabled=ss.length===0;
+        if(IS && ss.indexOf(IS)>=0) sub.value=IS;
+      }
+    }
+  }).catch(function(){ toText(prov, IP); toText(dist, ID); toText(sub, IS); });
 })();
 </script>
 {% endblock %}
@@ -3895,7 +3928,10 @@ loadProps();
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 {% endif %}
 <div class="max-w-6xl mx-auto">
-  <a href="/market" class="text-sm brandlink">← กลับตลาดประกาศ</a>
+  <div class="flex items-center justify-between">
+    <a href="/market" class="text-sm brandlink">← กลับตลาดประกาศ</a>
+    {% if is_owner %}<a href="/sell?edit={{ d.id }}" class="text-sm rounded-lg px-3 py-1.5 border font-medium text-slate-600 hover:bg-slate-50">✏️ แก้ไขประกาศ</a>{% endif %}
+  </div>
   <div class="mt-2 {% if d.lat and d.lng %}grid gap-5 lg:grid-cols-3 lg:items-start{% endif %}">
   <div class="{% if d.lat and d.lng %}lg:col-span-2{% endif %}">
   <div class="sheet overflow-hidden mt-2">
@@ -4108,6 +4144,7 @@ window.doRenovate=function(lid){
   <a href="/sell" class="text-sm text-white rounded-lg px-3 py-1.5" style="background:var(--survey)">+ ลงประกาศ</a>
 </div>
 {% if just_posted %}<div class="sheet p-3 mb-3 text-sm bg-emerald-50 text-emerald-800">✓ ส่งประกาศแล้ว รอทีมงานตรวจอนุมัติ</div>{% endif %}
+{% if just_updated %}<div class="sheet p-3 mb-3 text-sm bg-emerald-50 text-emerald-800">✓ บันทึกการแก้ไขแล้ว</div>{% endif %}
 {% if not rows %}
 <div class="sheet p-10 text-center text-slate-500">ยังไม่มีประกาศ — <a href="/sell" class="brandlink">ลงประกาศแรก</a> ได้เลย</div>
 {% else %}
@@ -4129,15 +4166,16 @@ window.doRenovate=function(lid){
       {% if r.status=='approved' and not r.expired and r.days_left is not none %}<span class="text-[11px] text-slate-400">เหลือ {{ r.days_left }} วัน</span>{% endif %}
     </div>
   </div>
-  {% if r.status=='approved' %}
-  <div class="mt-2 flex items-center gap-2">
+  <div class="mt-2 flex items-center gap-2 flex-wrap">
+    <a href="/sell?edit={{ r.id }}" class="text-xs rounded-lg px-3 py-1.5 border font-medium text-slate-600 hover:bg-slate-50">✏️ แก้ไข</a>
+    {% if r.status=='approved' %}
     <button type="button" onclick="bumpListing('{{ r.id }}', this)" {% if not r.can_bump %}disabled{% endif %}
       class="text-xs rounded-lg px-3 py-1.5 text-white" style="background:var(--survey);{% if not r.can_bump %}opacity:.4;pointer-events:none{% endif %}">
       {% if r.expired %}🔄 ต่ออายุประกาศ{% else %}⬆️ ดันประกาศขึ้นบนสุด{% endif %}</button>
     {% if not r.can_bump %}<span class="text-[11px] text-slate-400">ดันได้อีกครั้งในวันพรุ่งนี้</span>
     {% elif r.expired %}<span class="text-[11px] text-red-500">กดเพื่อกลับมาแสดงบนเว็บอีกครั้ง</span>{% endif %}
+    {% elif r.status=='rejected' %}<span class="text-[11px] text-slate-400">แก้ไขแล้วจะส่งไปรออนุมัติใหม่</span>{% endif %}
   </div>
-  {% endif %}
   {% if r.status=='rejected' and r.reject_reason %}<div class="text-xs text-red-600 mt-1">เหตุผล: {{ r.reject_reason }}</div>{% endif %}
 </div>
 {% endfor %}
@@ -5693,12 +5731,31 @@ def _annotate_bump(rows):
 
 
 @app.get("/sell", response_class=HTMLResponse)
-def sell_form(request: Request):
+def sell_form(request: Request, edit: str = Query("")):
     from fastapi.responses import RedirectResponse
-    if not current_user(request):
+    uid = current_user(request)
+    if not uid:
         return RedirectResponse("/login?next=/sell", status_code=303)
+    f: dict = {}
+    edit_id = None
+    if edit and not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                row = conn.execute("select * from member_listings where id = %s",
+                                   (edit,)).fetchone()
+                if row and (str(row["posted_by"]) == str(uid) or admin_ok(request)):
+                    f = dict(row)
+                    imgs = conn.execute(
+                        "select url from member_listing_images where listing_id = %s "
+                        "order by sort_order", (edit,)).fetchall()
+                    f["images"] = [i["url"] for i in imgs]
+                    edit_id = str(row["id"])
+        except Exception as exc:                                     # noqa: BLE001
+            log.warning("โหลดประกาศเพื่อแก้ไขไม่สำเร็จ: %s", str(exc)[:120])
     return env.get_template("sell.html").render(
-        title="ลงประกาศขาย/ให้เช่า ฟรี", storage_enabled=STORAGE_ENABLED,
+        title=("แก้ไขประกาศ" if edit_id else "ลงประกาศขาย/ให้เช่า ฟรี"),
+        storage_enabled=STORAGE_ENABLED, f=f, edit_id=edit_id,
         canonical=_abs_url(request, "/sell"),
         og_desc="ลงประกาศขายหรือให้เช่าอสังหาฯ ฟรีบนแปลงดี", **ubase(request))
 
@@ -5740,10 +5797,32 @@ async def sell_submit(request: Request):
         "contact_phone": phone or None,
         "contact_line": (f.get("contact_line") or "").strip()[:100] or None,
     }
+    edit_id = (f.get("edit_id") or "").strip() or None
     from core.db import connect
-    cols = ", ".join(fields.keys())
-    ph = ", ".join(["%s"] * len(fields))
     with connect() as conn:
+        if edit_id:
+            own = conn.execute(
+                "select posted_by, status from member_listings where id = %s",
+                (edit_id,)).fetchone()
+            if not own or (str(own["posted_by"]) != str(uid) and not admin_ok(request)):
+                raise HTTPException(403, "แก้ไขได้เฉพาะประกาศของตัวเอง")
+            upd = {k: v for k, v in fields.items() if k != "posted_by"}
+            # ถ้าเคยถูกปฏิเสธ พอแก้แล้วส่งกลับไปรออนุมัติใหม่อัตโนมัติ
+            if own["status"] == "rejected":
+                upd["status"] = "pending"
+                upd["reject_reason"] = None
+            set_sql = ", ".join(f"{k} = %s" for k in upd)
+            conn.execute(f"update member_listings set {set_sql} where id = %s",
+                         tuple(upd.values()) + (edit_id,))
+            conn.execute("delete from member_listing_images where listing_id = %s",
+                         (edit_id,))
+            for i, u in enumerate(images):
+                conn.execute("insert into member_listing_images (listing_id, url, sort_order) "
+                             "values (%s, %s, %s)", (edit_id, u, i))
+            conn.commit()
+            return RedirectResponse("/my-listings?updated=1", status_code=303)
+        cols = ", ".join(fields.keys())
+        ph = ", ".join(["%s"] * len(fields))
         lid = conn.execute(
             f"insert into member_listings ({cols}) values ({ph}) returning id",
             tuple(fields.values())).fetchone()["id"]
@@ -5882,12 +5961,13 @@ def member_detail(request: Request, lid: str):
         og_image=_abs_url(request, d["images"][0]) if d.get("images") else None,
         og_type="product", og_url=_abs_url(request, f"/m/{lid}"),
         can_renovate=can_renovate, reno_remaining=reno_remaining,
+        is_owner=bool(is_adm or (uid and uid == d.get("posted_by"))),
         reno_styles=RENO_STYLES, reno_limit=RENO_FREE_LIMIT,
         canonical=_abs_url(request, f"/m/{lid}"), **ubase(request))
 
 
 @app.get("/my-listings", response_class=HTMLResponse)
-def my_listings(request: Request, posted: str = Query("")):
+def my_listings(request: Request, posted: str = Query(""), updated: str = Query("")):
     from fastapi.responses import RedirectResponse
     uid = current_user(request)
     if not uid:
@@ -5913,7 +5993,7 @@ def my_listings(request: Request, posted: str = Query("")):
         except Exception as exc:                                    # noqa: BLE001
             log.warning("my-listings ล้มเหลว: %s", str(exc)[:120])
     return env.get_template("my_listings.html").render(
-        title="ประกาศของฉัน", rows=rows, just_posted=bool(posted),
+        title="ประกาศของฉัน", rows=rows, just_posted=bool(posted), just_updated=bool(updated),
         canonical=_abs_url(request, "/my-listings"),
         og_desc="ประกาศขาย/เช่าของฉันบนแปลงดี", **ubase(request))
 
