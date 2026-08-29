@@ -2075,38 +2075,36 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     var el=document.getElementById('nearby'); if(!el) return;
     var lat=el.getAttribute('data-lat'), lng=el.getAttribute('data-lng');
     var body=document.getElementById('nb-body');
-    var CAT=[['transport','🚉','การเดินทาง'],['edu','🎓','การศึกษา'],['health','🏥','สุขภาพ'],['life','🛒','ใช้ชีวิต/ช้อปปิ้ง']];
-    var DATA=null, R=5000;
+    var CAT=[['transport','🚉'],['edu','🎓'],['health','🏥'],['life','🛒']];
+    var DATA=null;
     function fd(m){ return m<1000 ? m+' ม.' : (m/1000).toFixed(1)+' กม.'; }
     function render(){
       if(!DATA) return;
-      var h='<div class="grid gap-2">';
-      CAT.forEach(function(c){
-        var d=DATA[c[0]]||{near:[],c1:0,c3:0,c5:0};
-        var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
-        var items=(d.near||[]).filter(function(x){return x.dist<=R;});
-        h+='<div class="border rounded-lg p-3">'
-          +'<div class="flex items-center justify-between"><div class="font-medium text-sm">'+c[1]+' '+c[2]+'</div>'
-          +'<div class="text-sm"><span class="font-semibold">'+cnt+'</span> <span class="text-slate-400 text-xs">แห่ง</span></div></div>';
-        if(items.length){
-          h+='<div class="mt-1.5 flex flex-wrap gap-1">';
-          items.slice(0,6).forEach(function(x){
-            h+='<span class="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">'+(x.name||x.sub)+' · '+fd(x.dist)+'</span>';
-          });
-          h+='</div>';
-        } else { h+='<div class="mt-1 text-xs text-slate-400">ไม่พบในรัศมีนี้</div>'; }
-        h+='</div>';
+      var rings=[[1000,'1 กม.'],[3000,'3 กม.'],[5000,'5 กม.']];
+      var h='';
+      rings.forEach(function(rg,idx){
+        var R=rg[0];
+        var cats=CAT.map(function(c){
+          var d=DATA[c[0]]||{c1:0,c3:0,c5:0};
+          var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
+          return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
+        }).join('');
+        var names=[];
+        CAT.forEach(function(c){ ((DATA[c[0]]||{}).near||[]).forEach(function(x){ if(x.dist<=R) names.push(x); }); });
+        names.sort(function(a,b){ return a.dist-b.dist; });
+        var seen={}, top=[];
+        for(var i=0;i<names.length && top.length<4;i++){
+          var nm=names[i].name||names[i].sub;
+          if(nm && !seen[nm]){ seen[nm]=1; top.push(nm+' <span style="opacity:.7">'+fd(names[i].dist)+'</span>'); }
+        }
+        h+='<div class="nb-ring" style="animation-delay:'+(idx*0.14).toFixed(2)+'s">'
+          +'<div class="nb-rlabel">'+rg[1]+'</div>'
+          +'<div class="nb-cats">'+cats+'</div>'
+          +(top.length?'<div class="nb-names">'+top.join(' · ')+'</div>':'')
+          +'</div>';
       });
-      body.innerHTML=h+'</div>';
+      body.innerHTML=h;
     }
-    document.querySelectorAll('.nb-tab').forEach(function(b){
-      b.addEventListener('click',function(){
-        R=parseInt(b.getAttribute('data-r'),10);
-        document.querySelectorAll('.nb-tab').forEach(function(x){x.removeAttribute('style');x.className='nb-tab border rounded-full px-3 py-1';});
-        b.className='nb-tab border rounded-full px-3 py-1'; b.setAttribute('style','background:var(--ink);color:#fff;border-color:var(--ink)');
-        render();
-      });
-    });
     fetch('/api/nearby?lat='+encodeURIComponent(lat)+'&lng='+encodeURIComponent(lng))
       .then(function(r){return r.json();}).then(function(res){
         if(res&&res.ok){ DATA=res.data; render(); }
@@ -2206,18 +2204,22 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
 
   {% if r.lat and r.lng %}
   <div class="sheet p-4" id="nearby" data-lat="{{ r.lat }}" data-lng="{{ r.lng }}">
-    <div class="flex items-center justify-between gap-2 flex-wrap">
-      <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้</h2>
-      <div class="flex gap-1 text-[11px]">
-        <button data-r="1000" class="nb-tab border rounded-full px-2.5 py-0.5">1 กม.</button>
-        <button data-r="3000" class="nb-tab border rounded-full px-2.5 py-0.5">3 กม.</button>
-        <button data-r="5000" class="nb-tab border rounded-full px-2.5 py-0.5" style="background:var(--ink);color:#fff;border-color:var(--ink)">5 กม.</button>
-      </div>
-    </div>
-    <div id="nb-body" class="mt-3 text-sm text-slate-500">
+    <style>
+      #nearby .nb-ring{border-top:1px solid var(--rule);padding-top:11px;margin-top:11px;opacity:0;transform:translateY(7px);animation:nbin .45s ease forwards}
+      #nearby .nb-ring:first-of-type{border-top:0;padding-top:0;margin-top:10px}
+      #nearby .nb-rlabel{display:inline-block;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;letter-spacing:.03em;color:#fff;background:var(--ink);border-radius:999px;padding:2px 11px}
+      #nearby .nb-cats{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:14px}
+      #nearby .nb-cat{display:inline-flex;align-items:center;gap:4px;color:#334155}
+      #nearby .nb-cat b{font-variant-numeric:tabular-nums;font-weight:600}
+      #nearby .nb-cat.zero{opacity:.3}
+      #nearby .nb-names{margin-top:6px;font-size:11.5px;color:#8a97a6;line-height:1.55}
+      @keyframes nbin{to{opacity:1;transform:none}}
+    </style>
+    <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้ <span class="text-xs font-normal text-slate-400">มีอะไรใกล้ๆ</span></h2>
+    <div id="nb-body" class="mt-2 text-sm text-slate-500">
       <span class="inline-flex items-center gap-2"><span class="animate-pulse">⏳</span> กำลังวิเคราะห์รอบทรัพย์…</span>
     </div>
-    <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap — บางพื้นที่อาจไม่ครบ</p>
+    <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap</p>
   </div>
   {% endif %}
 
