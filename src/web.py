@@ -2095,13 +2095,13 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     function fd(m){ return m<1000 ? m+' ม.' : (m/1000).toFixed(1)+' กม.'; }
     function render(){
       if(!DATA) return;
-      var rings=[[1000,'1 กม.'],[3000,'3 กม.'],[5000,'5 กม.']];
+      var rings=[[500,'500 ม.'],[1000,'1 กม.'],[3000,'3 กม.']];
       var h='';
       rings.forEach(function(rg,idx){
         var R=rg[0], prevR=idx===0?0:rings[idx-1][0];
         var cats=CAT.map(function(c){
-          var d=DATA[c[0]]||{c1:0,c3:0,c5:0};
-          var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
+          var d=DATA[c[0]]||{c500:0,c1000:0,c3000:0};
+          var cnt = R===500?d.c500 : R===1000?d.c1000 : d.c3000;
           return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
         }).join('');
         var names=[];
@@ -4034,13 +4034,13 @@ loadProps();
     function fd(m){ return m<1000 ? m+' ม.' : (m/1000).toFixed(1)+' กม.'; }
     function render(){
       if(!DATA) return;
-      var rings=[[1000,'1 กม.'],[3000,'3 กม.'],[5000,'5 กม.']];
+      var rings=[[500,'500 ม.'],[1000,'1 กม.'],[3000,'3 กม.']];
       var h='';
       rings.forEach(function(rg,idx){
         var R=rg[0], prevR=idx===0?0:rings[idx-1][0];
         var cats=CAT.map(function(c){
-          var d=DATA[c[0]]||{c1:0,c3:0,c5:0};
-          var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
+          var d=DATA[c[0]]||{c500:0,c1000:0,c3000:0};
+          var cnt = R===500?d.c500 : R===1000?d.c1000 : d.c3000;
           return '<span class="nb-cat'+(cnt?'':' zero')+'">'+c[1]+'<b>'+cnt+'</b></span>';
         }).join('');
         var names=[];
@@ -4678,15 +4678,17 @@ def map_view(request: Request, token: str = Query("")):
 _MAP_CACHE: dict = {}          # geojson แผนที่ (เหมือนกันทุกคน) — cache กันสร้างซ้ำ
 _MAP_TTL = 600                 # 10 นาที
 
-# ── "รอบทรัพย์นี้" — วิเคราะห์ POI รัศมี 1/3/5 กม. จาก OpenStreetMap (Overpass) ──
+# ── "รอบทรัพย์นี้" — วิเคราะห์ POI รัศมี 500ม./1/3 กม. จาก OpenStreetMap (Overpass) ──
+# เดิมใช้ 5 กม. ในย่านหนาแน่น (กทม.) query หนักจน mirror timeout → "ไม่สำเร็จ"
+# ลดเหลือ 3 กม. (พื้นที่ ~36%) เร็วขึ้นและเสถียรกว่ามาก
 _OSM_ENDPOINTS = [
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",   # เสถียรสุดจากที่ทดสอบ
     "https://overpass-api.de/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ]
 _POI_CACHE_DAYS = 45           # cache ผลต่อพิกัดกี่วัน
-_NEARBY_RADIUS = 5000          # เมตร
+_NEARBY_RADIUS = 3000          # เมตร (รัศมีสูงสุดที่ยิง Overpass)
 
 
 def _haversine_m(lat1, lng1, lat2, lng2):
@@ -4752,7 +4754,7 @@ def _overpass_query(lat: float, lng: float) -> str:
         f'node["amenity"~"^(marketplace|bank|fuel)$"]{ar};',
         f'node["leisure"="park"]{ar};way["leisure"="park"]{ar};',
     ]
-    return "[out:json][timeout:25];(" + "".join(parts) + ");out center tags 600;"
+    return "[out:json][timeout:20];(" + "".join(parts) + ");out center tags 500;"
 
 
 def _build_nearby(lat: float, lng: float, elements: list) -> dict:
@@ -4784,9 +4786,9 @@ def _build_nearby(lat: float, lng: float, elements: list) -> dict:
     for cat, items in cats.items():
         items.sort(key=lambda x: x["dist"])
         out[cat] = {
-            "c1": sum(1 for i in items if i["dist"] <= 1000),
-            "c3": sum(1 for i in items if i["dist"] <= 3000),
-            "c5": len(items),
+            "c500": sum(1 for i in items if i["dist"] <= 500),
+            "c1000": sum(1 for i in items if i["dist"] <= 1000),
+            "c3000": len(items),         # ทั้งหมด (<= _NEARBY_RADIUS = 3000)
             "near": items[:40],          # ส่งเยอะขึ้นเพื่อให้แบ่งช่วงระยะได้
         }
     return out
@@ -4799,7 +4801,7 @@ def fetch_nearby(lat: float, lng: float) -> dict:
     import urllib.error
     import urllib.parse
     import urllib.request
-    ck = f"v2:{round(lat, 3)},{round(lng, 3)}"      # v2 = เก็บ 40 จุด/หมวด (แบ่งช่วงระยะ)
+    ck = f"v3:{round(lat, 3)},{round(lng, 3)}"      # v3 = รัศมี 3กม. + นับ 500/1000/3000
     if not DEMO_MODE:
         try:
             from core.db import connect
