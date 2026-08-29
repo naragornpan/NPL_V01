@@ -16,6 +16,7 @@ jobs:
         include:
           - { source: bam,         pages: 40 }
           - { source: ghb,         pages: 40 }
+          - { source: krungsri,   pages: 40 }   # กรุงศรี — server-render 10/หน้า
           - { source: ktb,         pages: 40 }
           - { source: ttb,         pages: 40 }
           - { source: sam,         pages: 25 }

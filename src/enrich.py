@@ -24,6 +24,7 @@ from core.db import connect  # noqa: E402
 from core.gallery import (fetch_bam_detail, fetch_led_detail,  # noqa: E402
                           fetch_sam_detail)
 from adapters.ghb import fetch_ghb_detail  # noqa: E402
+from adapters.krungsri import fetch_krungsri_detail  # noqa: E402
 from core.geocode import geocode_place  # noqa: E402
 from core import landsmaps  # noqa: E402
 from core.grading import compute  # noqa: E402
@@ -402,6 +403,17 @@ _GHB_CAND_SQL = """
        and coalesce(s.geo_precision, '') <> 'parcel'
 """
 
+_KRUNGSRI_CAND_SQL = """
+    select s.external_ref, s.detail_url
+      from (select distinct on (source_code, external_ref)
+                   external_ref, detail_url, geo_precision
+              from listing_snapshots
+             where source_code = 'krungsri'
+             order by source_code, external_ref, observed_at desc) s
+     where s.detail_url is not null
+       and coalesce(s.geo_precision, '') <> 'parcel'
+"""
+
 
 def do_ghb_coords(limit: int | None = None, batch: int = 25) -> dict:
     """เติมพิกัดจริงให้ทรัพย์ ธอส. จากหน้า detail (Google Maps q=lat,lng)
@@ -455,6 +467,62 @@ def do_ghb_coords(limit: int | None = None, batch: int = 25) -> dict:
     flush()
 
     log.info("ได้พิกัดจริง ธอส. เพิ่ม %s รายการ · ไม่มีลิงก์แผนที่/ดึงไม่ได้ %s",
+             coords, missing)
+    return {"with_coords": coords, "no_map": missing, "remaining": remaining}
+
+
+def do_krungsri_coords(limit: int | None = None, batch: int = 25) -> dict:
+    """เติมพิกัดจริงให้ทรัพย์ กรุงศรี จากหน้า detail (Google Maps q=lat,lng)
+
+    กรุงศรี เก็บพิกัดจริงไว้ในหน้า /property-{ID} อยู่แล้ว — ดีกว่า geocode
+    ระดับตำบลมาก (ทรัพย์ไม่ซ้อนหมุด) จึงตั้ง geo_precision = 'parcel'
+    เหมือน BAM/SAM  หน้า list ไม่มีพิกัด จึงต้องเข้า detail ทีละตัว
+
+    ใช้แพทเทิร์นเดียวกับ backfill BAM: ไม่ถือ DB connection ระหว่างยิงเว็บ
+    เขียนเป็น batch สั้น ๆ กัน Supabase pooler ตัด connection ที่ idle
+    รันซ้ำได้จนหมด (ตัวที่ได้ parcel แล้วจะไม่ถูกเลือกอีก)
+    """
+    limit = limit or DEFAULT_DETAIL_LIMIT
+
+    with connect() as conn:
+        rows = conn.execute(_KRUNGSRI_CAND_SQL + " limit %s", (limit,)).fetchall()
+        remaining = conn.execute(
+            "select count(*) as n from (" + _KRUNGSRI_CAND_SQL + ") q").fetchone()["n"]
+        rows = [(r["external_ref"], r["detail_url"]) for r in rows]
+
+    log.info("เติมพิกัด กรุงศรี รอบนี้ %s รายการ (ค้างอีก %s · ประมาณ %.0f นาที)",
+             len(rows), max(0, remaining - len(rows)), len(rows) * 2 / 60)
+
+    coords = missing = 0
+    buffer: list[tuple] = []
+
+    def flush() -> None:
+        nonlocal buffer, coords
+        if not buffer:
+            return
+        with connect() as conn:
+            for lat, lng, ref in buffer:
+                conn.execute(
+                    """update listing_snapshots
+                          set lat = %s, lng = %s, geo_precision = 'parcel'
+                        where source_code = 'krungsri' and external_ref = %s""",
+                    (lat, lng, ref))
+            conn.commit()
+        coords += len(buffer)
+        log.info("  เขียนพิกัดแล้วรวม %s · หาไม่เจอ %s", coords, missing)
+        buffer = []
+
+    for ref, detail_url in rows:
+        d = fetch_krungsri_detail(detail_url)          # ยิงเว็บ ไม่ถือ conn
+        if d.get("lat"):
+            buffer.append((d["lat"], d["lng"], ref))
+        else:
+            missing += 1
+        if len(buffer) >= batch:
+            flush()
+    flush()
+
+    log.info("ได้พิกัดจริง กรุงศรี เพิ่ม %s รายการ · ไม่มีลิงก์แผนที่/ดึงไม่ได้ %s",
              coords, missing)
     return {"with_coords": coords, "no_map": missing, "remaining": remaining}
 
@@ -684,7 +752,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("command",
                     choices=["geocode", "grade", "details", "all",
-                             "backfill-coords", "ghb-coords",
+                             "backfill-coords", "ghb-coords", "krungsri-coords",
                              "led-details", "landsmaps", "infra"])
     ap.add_argument("--limit", type=int,
                     help="จำกัดจำนวนต่อรอบ (โซนที่ geocode / ทรัพย์ที่ดึงที่อยู่)")
@@ -701,6 +769,9 @@ def main() -> int:
     if args.command == "ghb-coords":
         do_ghb_coords(args.detail_limit or args.limit)
         return 0
+    if args.command == "krungsri-coords":
+        do_krungsri_coords(args.detail_limit or args.limit)
+        return 0
     if args.command == "led-details":
         do_led_details(args.detail_limit or args.limit)
         return 0
@@ -715,6 +786,7 @@ def main() -> int:
     # จัดการ connection เองเป็นชุดสั้น ๆ จึงเรียกนอก with ด้านล่าง
     if args.command == "all":
         do_ghb_coords(args.detail_limit or args.limit)
+        do_krungsri_coords(args.detail_limit or args.limit)
 
     with connect() as conn:
         if args.command == "details":

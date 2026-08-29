@@ -26,6 +26,7 @@ from adapters.sam import SamAdapter  # noqa: E402
 from adapters.ghb import GhbAdapter  # noqa: E402
 from adapters.ttb import TtbAdapter  # noqa: E402
 from adapters.led_auction import LedAuctionAdapter  # noqa: E402
+from adapters.krungsri import KrungsriAdapter  # noqa: E402
 from core.db import Repo, connect  # noqa: E402
 from core.http import Fetcher  # noqa: E402
 from core.zones import (estimated_runtime_minutes, office_filter_for_tier,  # noqa: E402
@@ -37,6 +38,7 @@ ADAPTERS = {
     GhbAdapter.source_code: GhbAdapter,
     TtbAdapter.source_code: TtbAdapter,
     LedAuctionAdapter.source_code: LedAuctionAdapter,
+    KrungsriAdapter.source_code: KrungsriAdapter,
     SamAdapter.source_code: SamAdapter,
     # เพิ่ม adapter ใหม่ที่นี่
 }
