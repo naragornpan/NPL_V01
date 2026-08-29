@@ -4214,11 +4214,21 @@ window.doRenovate=function(lid){
     <td class="p-3"><div class="font-medium">{{ r.code }}</div>
       <div class="text-xs text-slate-500 line-clamp-1">{{ r.name }}</div></td>
     <td class="tabular-nums text-slate-500">{{ "{:,}".format(r.n or 0) }}</td>
-    <td><span class="text-[11px] px-2 py-0.5 rounded
-      {% if r.legal_status=='checked' %}bg-emerald-100 text-emerald-700
-      {% elif r.legal_status=='restricted' %}bg-red-100 text-red-700
-      {% elif r.legal_status=='prohibited' %}bg-red-200 text-red-800
-      {% else %}bg-amber-100 text-amber-800{% endif %}">{{ r.legal_status or '-' }}</span></td>
+    <td>
+      {% if r.institution_code %}
+      <form method="post" action="/admin/sources/legal" style="display:inline">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="hidden" name="code" value="{{ r.code }}">
+        <select name="status" onchange="this.form.submit()"
+          class="text-[11px] border rounded px-1.5 py-1 bg-white
+          {% if r.legal_status in ('permitted','checked') %}text-emerald-700 border-emerald-300
+          {% elif r.legal_status in ('restricted','prohibited') %}text-red-700 border-red-300
+          {% else %}text-amber-700 border-amber-300{% endif %}">
+          {% for s in legal_statuses %}<option value="{{ s }}" {% if r.legal_status==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+      </form>
+      {% else %}<span class="text-slate-300 text-xs">- (ไม่มีสถาบัน)</span>{% endif %}
+    </td>
     <td>{% if r.is_active %}<span class="text-[11px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">🟢 เปิด</span>
       {% else %}<span class="text-[11px] px-2 py-0.5 rounded bg-slate-200 text-slate-600">⚪ ปิด</span>{% endif %}</td>
     <td class="text-right p-3">
@@ -4405,17 +4415,22 @@ window.doRenovate=function(lid){
 <form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
   <div class="flex gap-1">
     {% for v,lbl in [('','ทั้งหมด'),('sold','ขายได้'),('nobid','ไม่มีผู้สู้ราคา')] %}
-    <a href="/auction-results?result={{ v }}{% if province %}&province={{ province }}{% endif %}"
+    <a href="/auction-results?result={{ v }}{% if province %}&province={{ province }}{% endif %}{% if date %}&date={{ date }}{% endif %}"
        class="px-3 py-1.5 rounded-lg border {% if result==v %}text-white{% else %}text-slate-600 hover:bg-slate-50{% endif %}"
        style="{% if result==v %}background:var(--survey);border-color:var(--survey){% endif %}">{{ lbl }}</a>
     {% endfor %}
   </div>
-  <label class="ml-auto">จังหวัด
+  {% if result %}<input type="hidden" name="result" value="{{ result }}">{% endif %}
+  <label class="ml-auto">วันขาย
+    <select name="date" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white max-w-[190px]">
+      <option value="">ทุกวัน ({{ date_opts|length }} วัน)</option>
+      {% for d in date_opts %}<option value="{{ d.iso }}" {% if d.iso==date %}selected{% endif %}>{{ d.label }} ({{ d.n }})</option>{% endfor %}
+    </select></label>
+  <label>จังหวัด
     <select name="province" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
       <option value="">ทุกจังหวัด</option>
       {% for p in provinces %}<option value="{{ p }}" {% if p==province %}selected{% endif %}>{{ p }}</option>{% endfor %}
     </select></label>
-  {% if result %}<input type="hidden" name="result" value="{{ result }}">{% endif %}
 </form>
 
 {% if not groups %}
@@ -4471,7 +4486,7 @@ window.doRenovate=function(lid){
 <div class="flex justify-center gap-1 mt-6 text-sm">
   {% for p in range(1, pages+1) %}
   {% if p==page %}<span class="px-3 py-1.5 rounded-lg text-white" style="background:var(--survey)">{{ p }}</span>
-  {% else %}<a href="/auction-results?page={{ p }}{% if result %}&result={{ result }}{% endif %}{% if province %}&province={{ province }}{% endif %}" class="px-3 py-1.5 rounded-lg border hover:bg-slate-50">{{ p }}</a>{% endif %}
+  {% else %}<a href="/auction-results?page={{ p }}{% if result %}&result={{ result }}{% endif %}{% if province %}&province={{ province }}{% endif %}{% if date %}&date={{ date }}{% endif %}" class="px-3 py-1.5 rounded-lg border hover:bg-slate-50">{{ p }}</a>{% endif %}
   {% endfor %}
 </div>
 {% endif %}
@@ -6389,11 +6404,15 @@ def _auction_stats(days: int = 0) -> dict:
 
 @app.get("/auction-results", response_class=HTMLResponse)
 def auction_results(request: Request, result: str = Query(""),
-                    province: str = Query(""), page: int = Query(1, ge=1)):
+                    province: str = Query(""), date: str = Query(""),
+                    page: int = Query(1, ge=1)):
     """หน้าสรุป "จบประมูล" — ผลการขายทอดตลาด LED (ราคาจบ/ไม่มีผู้สู้ราคา) จัดตามวันขาย"""
+    if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        date = ""
     groups: list = []
     total = 0
     provinces: list = []
+    date_opts: list = []
     stats = {"n": 0, "sold": 0, "sum_sold": 0}
     if not DEMO_MODE:
         try:
@@ -6412,6 +6431,8 @@ def auction_results(request: Request, result: str = Query(""),
                 conds.append("not l.is_sold")
             if province:
                 conds.append("g.province = %s"); params.append(province)
+            if date:
+                conds.append("l.sale_date = %s::date"); params.append(date)
             where = " and ".join(conds)
             ps = 60
             off = (page - 1) * ps
@@ -6439,6 +6460,11 @@ def auction_results(request: Request, result: str = Query(""),
                 provinces = [r["province"] for r in conn.execute(
                     f"{cte} select distinct g.province from latest l {join} "
                     f"where g.province is not null order by 1").fetchall()]
+                date_opts = [{"iso": r["sale_date"].isoformat(),
+                              "label": _thai_date(r["sale_date"]), "n": r["n"]}
+                             for r in conn.execute(
+                    f"{cte} select sale_date, count(*) n from latest l "
+                    f"group by sale_date order by sale_date desc").fetchall()]
             # เตรียมข้อมูลแสดง: %ต่างจากประเมิน + จัดกลุ่มตามวันขาย
             for r in rows:
                 ap, sp = r.get("appraised_price"), r.get("sold_price")
@@ -6454,6 +6480,7 @@ def auction_results(request: Request, result: str = Query(""),
     return env.get_template("auction_results.html").render(
         title="ผลจบประมูล ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
         page=page, pages=pages, result=result, province=province, provinces=provinces,
+        date=date, date_opts=date_opts,
         stats=stats, astats=_auction_stats(), canonical=_abs_url(request, "/auction-results"),
         og_desc="ผลการขายทอดตลาดกรมบังคับคดี — ทรัพย์ไหนขายจบที่ราคาเท่าไหร่ หรือไม่มีผู้สู้ราคา ดูตามวันขาย",
         **ubase(request))
@@ -7247,7 +7274,8 @@ def admin_sources(request: Request, token: str = Query(""), msg: str = Query("")
                   left join institutions i on i.code = s.institution_code
                  order by s.is_active desc, n desc, s.code""").fetchall()]
     return env.get_template("admin_sources.html").render(
-        title="จัดการแหล่งข้อมูล", rows=rows, token=token, msg=msg, **base())
+        title="จัดการแหล่งข้อมูล", rows=rows, token=token, msg=msg,
+        legal_statuses=LEGAL_STATUSES, **base())
 
 
 @app.post("/admin/sources/toggle")
@@ -7286,6 +7314,35 @@ async def admin_sources_toggle(request: Request):
             conn.execute("update sources set is_active=false where code=%s", (code,))
             msg = f"ปิด {code} แล้ว"
         conn.commit()
+    return RedirectResponse(f"/admin/sources?token={tk}&msg={msg}", status_code=303)
+
+
+LEGAL_STATUSES = ["permitted", "checked", "restricted", "unknown", "prohibited"]
+
+
+@app.post("/admin/sources/legal")
+async def admin_sources_legal(request: Request):
+    """ตั้งสถานะสิทธิ์ (legal_status) ของสถาบันที่ผูกกับแหล่ง — มีผลกับทุก source ของสถาบันนั้น"""
+    from fastapi.responses import RedirectResponse
+    form = await read_form(request)
+    _require_admin(request, form.get("token", ""))
+    if DEMO_MODE:
+        raise HTTPException(400, "โหมดตัวอย่างแก้ไม่ได้")
+    code = (form.get("code") or "").strip()
+    status = (form.get("status") or "").strip()
+    tk = form.get("token", "")
+    if status not in LEGAL_STATUSES:
+        return RedirectResponse(f"/admin/sources?token={tk}&msg=สถานะไม่ถูกต้อง", status_code=303)
+    from core.db import connect
+    with connect() as conn:
+        src = conn.execute("select institution_code from sources where code=%s", (code,)).fetchone()
+        if src and src["institution_code"]:
+            conn.execute("update institutions set legal_status=%s where code=%s",
+                         (status, src["institution_code"]))
+            conn.commit()
+            msg = f"ตั้งสถานะสิทธิ์ {code} = {status}"
+        else:
+            msg = f"{code} ไม่มีสถาบันผูก — แก้สถานะไม่ได้"
     return RedirectResponse(f"/admin/sources?token={tk}&msg={msg}", status_code=303)
 
 
