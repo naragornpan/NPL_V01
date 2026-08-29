@@ -1472,6 +1472,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/admin/promoted{{ tk }}" class="navlink whitespace-nowrap">โปรโมท</a>
       <a href="/admin/market{{ tk }}" class="navlink whitespace-nowrap">อนุมัติประกาศ</a>
       <a href="/admin/settings{{ tk }}" class="navlink whitespace-nowrap">ตั้งค่า</a>
+      <a href="/admin/sources{{ tk }}" class="navlink whitespace-nowrap">แหล่งข้อมูล</a>
       <a href="/health{{ tk }}" class="navlink whitespace-nowrap">สุขภาพระบบ</a>
       <a href="/admin/logout" class="navlink whitespace-nowrap text-slate-400">ออกจากระบบ</a>
       {% endif %}
@@ -4192,6 +4193,52 @@ window.doRenovate=function(lid){
   }).catch(function(){btn.disabled=false;btn.textContent=old;box.innerHTML='<div class="text-sm text-red-600">เกิดข้อผิดพลาด ลองใหม่</div>';});
 };
 </script>
+{% endblock %}
+""",
+"admin_sources.html": """
+{% extends "layout.html" %}{% block body %}
+<div class="flex items-center justify-between mb-3">
+  <h1 class="text-xl font-semibold">แหล่งข้อมูล (Sources)</h1>
+  <a href="/admin?token={{ token }}" class="text-sm brandlink">← แอดมิน</a>
+</div>
+{% if msg %}<div class="sheet p-3 mb-3 text-sm bg-emerald-50 text-emerald-800">{{ msg }}</div>{% endif %}
+<div class="sheet overflow-x-auto">
+<table class="w-full text-sm">
+  <thead><tr class="text-xs text-slate-400 text-left border-b" style="border-color:var(--rule)">
+    <th class="p-3 font-normal">แหล่ง</th><th class="font-normal">ทรัพย์</th>
+    <th class="font-normal">สถานะสิทธิ์</th><th class="font-normal">สถานะ</th>
+    <th class="font-normal text-right p-3">เปิด/ปิด</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="border-b hover:bg-slate-50" style="border-color:var(--rule)">
+    <td class="p-3"><div class="font-medium">{{ r.code }}</div>
+      <div class="text-xs text-slate-500 line-clamp-1">{{ r.name }}</div></td>
+    <td class="tabular-nums text-slate-500">{{ "{:,}".format(r.n or 0) }}</td>
+    <td><span class="text-[11px] px-2 py-0.5 rounded
+      {% if r.legal_status=='checked' %}bg-emerald-100 text-emerald-700
+      {% elif r.legal_status=='restricted' %}bg-red-100 text-red-700
+      {% elif r.legal_status=='prohibited' %}bg-red-200 text-red-800
+      {% else %}bg-amber-100 text-amber-800{% endif %}">{{ r.legal_status or '-' }}</span></td>
+    <td>{% if r.is_active %}<span class="text-[11px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">🟢 เปิด</span>
+      {% else %}<span class="text-[11px] px-2 py-0.5 rounded bg-slate-200 text-slate-600">⚪ ปิด</span>{% endif %}</td>
+    <td class="text-right p-3">
+      <form method="post" action="/admin/sources/toggle" style="display:inline">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="hidden" name="code" value="{{ r.code }}">
+        <input type="hidden" name="to" value="{{ 'off' if r.is_active else 'on' }}">
+        {% if r.is_active %}
+        <button class="text-xs rounded-lg px-3 py-1.5 border text-slate-600 hover:bg-slate-50">ปิด</button>
+        {% else %}
+        <button {% if r.legal_status in ('restricted','unknown','prohibited') %}onclick="return confirm('แหล่งนี้สถานะสิทธิ์ = {{ r.legal_status }} — การเปิดถือว่าคุณตรวจ ToS/ยอมรับความเสี่ยงลิขสิทธิ์เองแล้ว ยืนยันเปิด?')"{% endif %}
+          class="text-xs rounded-lg px-3 py-1.5 text-white" style="background:var(--survey)">เปิด</button>
+        {% endif %}
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody></table>
+</div>
+<p class="text-[11px] text-slate-400 mt-3">⚠️ เปิดแหล่งที่สถานะ restricted/unknown = ยอมรับความเสี่ยง ToS/ลิขสิทธิ์เอง (เช่น ออมสิน footer ห้ามทำซ้ำ) · แนะนำขออนุญาต/เป็นพันธมิตรก่อนใช้เชิงพาณิชย์ · การเปิดจะตั้งสถานะสิทธิ์เป็น checked ให้ผ่าน guard</p>
 {% endblock %}
 """,
 "auction_stats.html": """
@@ -7181,6 +7228,65 @@ async def admin_settings_save(request: Request):
                 st.save(conn, key, form.get(key, ""))
     return RedirectResponse(
         f"/admin/settings?token={form.get('token','')}&saved=1", status_code=303)
+
+
+@app.get("/admin/sources", response_class=HTMLResponse)
+def admin_sources(request: Request, token: str = Query(""), msg: str = Query("")):
+    """จัดการแหล่งข้อมูล — เปิด/ปิด (is_active) + สถานะสิทธิ์ (ToS)"""
+    _require_admin(request, token)
+    rows: list = []
+    if not DEMO_MODE:
+        from core.db import connect
+        with connect() as conn:
+            rows = [dict(r) for r in conn.execute("""
+                select s.code, s.name, s.is_active, s.institution_code, s.notes,
+                       i.legal_status,
+                       (select count(*) from listing_snapshots ls
+                         where ls.source_code = s.code) as n
+                  from sources s
+                  left join institutions i on i.code = s.institution_code
+                 order by s.is_active desc, n desc, s.code""").fetchall()]
+    return env.get_template("admin_sources.html").render(
+        title="จัดการแหล่งข้อมูล", rows=rows, token=token, msg=msg, **base())
+
+
+@app.post("/admin/sources/toggle")
+async def admin_sources_toggle(request: Request):
+    """เปิด/ปิด source — ตอนเปิด ถ้าสถานะสิทธิ์บล็อกอยู่ (unknown/restricted) จะเคลียร์เป็น checked
+       (ถือว่าแอดมินยอมรับความเสี่ยง ToS/ลิขสิทธิ์เอง) · prohibited เปิดผ่านปุ่มนี้ไม่ได้"""
+    from fastapi.responses import RedirectResponse
+    form = await read_form(request)
+    _require_admin(request, form.get("token", ""))
+    if DEMO_MODE:
+        raise HTTPException(400, "โหมดตัวอย่างแก้ไม่ได้")
+    code = (form.get("code") or "").strip()
+    turn_on = form.get("to") == "on"
+    tk = form.get("token", "")
+    msg = ""
+    from core.db import connect
+    with connect() as conn:
+        src = conn.execute(
+            "select s.institution_code, i.legal_status from sources s "
+            "left join institutions i on i.code=s.institution_code where s.code=%s",
+            (code,)).fetchone()
+        if not src:
+            return RedirectResponse(f"/admin/sources?token={tk}&msg=ไม่พบแหล่ง", status_code=303)
+        if turn_on:
+            if src["legal_status"] == "prohibited":
+                return RedirectResponse(
+                    f"/admin/sources?token={tk}&msg=แหล่ง {code} สถานะ prohibited เปิดผ่านปุ่มไม่ได้ ต้องเคลียร์สิทธิ์ก่อน",
+                    status_code=303)
+            # เคลียร์ guard ถ้าสถานะยังบล็อก (แอดมินยอมรับความเสี่ยงเอง)
+            if src["legal_status"] in ("unknown", "restricted") and src["institution_code"]:
+                conn.execute("update institutions set legal_status='checked' where code=%s",
+                             (src["institution_code"],))
+            conn.execute("update sources set is_active=true where code=%s", (code,))
+            msg = f"เปิด {code} แล้ว (ตั้งสถานะสิทธิ์เป็น checked — ถือว่ายอมรับความเสี่ยง ToS)"
+        else:
+            conn.execute("update sources set is_active=false where code=%s", (code,))
+            msg = f"ปิด {code} แล้ว"
+        conn.commit()
+    return RedirectResponse(f"/admin/sources?token={tk}&msg={msg}", status_code=303)
 
 
 # ---------------------------------------------------------------------
