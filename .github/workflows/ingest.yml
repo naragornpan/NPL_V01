@@ -50,6 +50,23 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/enrich.py all --skip-details
 
+  led_results:
+    needs: ingest
+    if: always()                # ดึงผลแม้ ingest บางแหล่งไม่ครบ
+    runs-on: ubuntu-latest
+    timeout-minutes: 90         # รอบแรกนาน (~30-50 นาที) รอบถัดไปเร็ว (ข้ามที่ดึงแล้ว)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: ดึงผลจบประมูล LED (ราคาจบ) + จับคู่ทรัพย์
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/led_results.py
+
   health:
     needs: enrich
     if: always()

@@ -437,11 +437,33 @@ def led_extra(ref: str) -> dict:
                           raw_fields->>'auction_venue' as auction_venue,
                           raw_fields->'_open_post'->>'province_id' as led_pid,
                           raw_fields->'_open_post'->>'province_name' as led_pname,
-                          raw_fields->'_open_post'->>'search_bid_date' as led_bdate
+                          raw_fields->'_open_post'->>'search_bid_date' as led_bdate,
+                          raw_fields->'_open_post'->>'saletypename' as saletype,
+                          raw_fields->'_open_post'->>'occupant' as occupant,
+                          raw_fields->'_open_post'->>'sale_location1' as sale_location,
+                          raw_fields->'_open_post'->>'sale_time1' as sale_time,
+                          raw_fields->'_open_post' as op
                      from listing_snapshots
                     where source_code='led_auction' and external_ref=%s
                     order by observed_at desc limit 1""", (ref,)).fetchone()
-        return dict(row) if row else {}
+        if not row:
+            return {}
+        d = dict(row)
+        op = d.pop("op", None) or {}
+        # ตารางนัดประมูลทุกนัด (จาก biddate1..8 ที่เก็บไว้)
+        import datetime as _dt
+        today = _dt.date.today()
+        sched = []
+        for i in range(1, 9):
+            bd = op.get(f"biddate{i}")
+            if bd and bd.isdigit() and len(bd) == 8:
+                try:
+                    dd = _dt.date(int(bd[:4]) - 543, int(bd[4:6]), int(bd[6:8]))
+                    sched.append({"round": i, "label": _thai_date(dd), "past": dd < today})
+                except ValueError:
+                    pass
+        d["schedule"] = sched
+        return d
     except Exception as exc:                                        # noqa: BLE001
         log.warning("led_extra ล้มเหลว: %s", str(exc)[:120])
         return {}
@@ -2219,6 +2241,19 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
        style="color:var(--survey)">ทำไมได้เกรดนี้ →</a>
     {% endif %}
   </div>
+
+  {% if r.led_schedule %}
+  <div class="sheet p-4">
+    <h2 class="font-semibold text-sm mb-2">📅 นัดประมูล <span class="text-xs font-normal text-slate-400">(ราคานัดหลังมักลดลงถ้ายังไม่มีผู้สู้ราคา)</span></h2>
+    <div class="flex flex-wrap gap-2">
+      {% for s in r.led_schedule %}
+      <span class="text-xs px-2.5 py-1 rounded-lg border {% if s.past %}bg-slate-100 text-slate-400{% else %}text-slate-700 bg-white{% endif %}">
+        นัด {{ s.round }} · {{ s.label }}{% if s.past %} · ผ่านแล้ว{% endif %}</span>
+      {% endfor %}
+    </div>
+    {% if r.led_sale_location and r.led_sale_location != '-' %}<div class="text-xs text-slate-500 mt-3">📍 สถานที่ขาย: {{ r.led_sale_location }}</div>{% endif %}
+  </div>
+  {% endif %}
 
   {% if auc_result %}
   <div class="sheet p-4" style="border-left:4px solid {{ '#10b981' if auc_result.is_sold else '#94a3b8' }}">
@@ -4716,6 +4751,10 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         r["led_pid"] = ex.get("led_pid")
         r["led_pname"] = ex.get("led_pname")
         r["led_bdate"] = ex.get("led_bdate")
+        r["led_saletype"] = ex.get("saletype")
+        r["led_occupant"] = ex.get("occupant")
+        r["led_sale_location"] = ex.get("sale_location")
+        r["led_schedule"] = ex.get("schedule") or []
         if _blank(r.get("district")):
             r["district"] = None
         if _blank(r.get("subdistrict")):
@@ -4773,7 +4812,8 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         ("หน่วยงานที่ขาย", r.get("office_name")),
         ("สถานที่ขายทอดตลาด", r.get("auction_venue")),
         ("การจำนอง", "ติดไปกับทรัพย์" if r.get("mortgage_carried") else "ไม่ติดไป"),
-        ("ผู้อยู่อาศัย", r.get("occupancy_note")),
+        ("ภาระผูกพัน", r.get("led_saletype") if not _blank(r.get("led_saletype")) else None),
+        ("ผู้อยู่อาศัย/ผู้ครอบครอง", r.get("occupancy_note") or (r.get("led_occupant") if not _blank(r.get("led_occupant")) else None)),
         ("สภาพทรัพย์", "ปรับปรุง/รีโนเวทแล้ว" if r.get("renovated") else None),
         ("จังหวัด", (r.get("province") + " (จากศาล)") if prov_inferred and r.get("province") else r.get("province")),
         ("อำเภอ/เขต", r.get("district")),
