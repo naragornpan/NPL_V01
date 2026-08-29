@@ -2090,7 +2090,7 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     var el=document.getElementById('nearby'); if(!el) return;
     var lat=el.getAttribute('data-lat'), lng=el.getAttribute('data-lng');
     var body=document.getElementById('nb-body');
-    var CAT=[['transport','🚉'],['edu','🎓'],['health','🏥'],['life','🛒']];
+    var CAT=[['rail','🚊'],['transport','🚌'],['edu','🎓'],['health','🏥'],['life','🛒']];
     var DATA=null;
     function fd(m){ return m<1000 ? m+' ม.' : (m/1000).toFixed(1)+' กม.'; }
     function render(){
@@ -4029,7 +4029,7 @@ loadProps();
     var el=document.getElementById('nearby'); if(!el) return;
     var lat=el.getAttribute('data-lat'), lng=el.getAttribute('data-lng');
     var body=document.getElementById('nb-body');
-    var CAT=[['transport','🚉'],['edu','🎓'],['health','🏥'],['life','🛒']];
+    var CAT=[['rail','🚊'],['transport','🚌'],['edu','🎓'],['health','🏥'],['life','🛒']];
     var DATA=null;
     function fd(m){ return m<1000 ? m+' ม.' : (m/1000).toFixed(1)+' กม.'; }
     function render(){
@@ -4708,8 +4708,9 @@ def _poi_category(tags: dict) -> str | None:
     rw = tags.get("railway", "")
     pt = tags.get("public_transport", "")
     le = tags.get("leisure", "")
-    if rw in ("station", "halt") or pt == "station" or a == "bus_station" \
-            or tags.get("aeroway") == "aerodrome":
+    if rw in ("station", "halt") or tags.get("station") in ("subway", "light_rail", "monorail"):
+        return "rail"
+    if a == "bus_station" or tags.get("aeroway") == "aerodrome" or pt == "station":
         return "transport"
     if a in ("school", "university", "college", "kindergarten"):
         return "edu"
@@ -4730,8 +4731,12 @@ def _poi_subtype(tags: dict) -> str:
          "bus_station": "สถานีขนส่ง"}
     ms = {"mall": "ห้างสรรพสินค้า", "department_store": "ห้างสรรพสินค้า",
           "supermarket": "ซูเปอร์มาร์เก็ต", "convenience": "ร้านสะดวกซื้อ"}
-    if rw in ("station", "halt") or pt == "station":
+    if rw in ("station", "halt") or tags.get("station") in ("subway", "light_rail", "monorail"):
         return "สถานีรถไฟฟ้า/รถไฟ"
+    if tags.get("aeroway") == "aerodrome":
+        return "สนามบิน"
+    if pt == "station":
+        return "จุดขนส่งสาธารณะ"
     if le == "park":
         return "สวนสาธารณะ"
     return m.get(a) or ms.get(s) or "สถานที่"
@@ -4759,7 +4764,7 @@ def _overpass_query(lat: float, lng: float) -> str:
 
 def _build_nearby(lat: float, lng: float, elements: list) -> dict:
     """จัดหมวด + คิดระยะ + นับ 1/3/5 กม. + เก็บที่ใกล้สุดต่อหมวด"""
-    cats = {k: [] for k in ("transport", "edu", "health", "life")}
+    cats = {k: [] for k in ("rail", "transport", "edu", "health", "life")}
     seen = set()
     for el in elements:
         tags = el.get("tags") or {}
@@ -4801,7 +4806,7 @@ def fetch_nearby(lat: float, lng: float) -> dict:
     import urllib.error
     import urllib.parse
     import urllib.request
-    ck = f"v3:{round(lat, 3)},{round(lng, 3)}"      # v3 = รัศมี 3กม. + นับ 500/1000/3000
+    ck = f"v4:{round(lat, 3)},{round(lng, 3)}"      # v4 = แยกหมวดรถไฟฟ้า (rail) ออกจากคมนาคม
     if not DEMO_MODE:
         try:
             from core.db import connect
