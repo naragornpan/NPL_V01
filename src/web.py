@@ -4600,7 +4600,9 @@ _MAP_TTL = 600                 # 10 นาที
 # ── "รอบทรัพย์นี้" — วิเคราะห์ POI รัศมี 1/3/5 กม. จาก OpenStreetMap (Overpass) ──
 _OSM_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 _POI_CACHE_DAYS = 45           # cache ผลต่อพิกัดกี่วัน
 _NEARBY_RADIUS = 5000          # เมตร
