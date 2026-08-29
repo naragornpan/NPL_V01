@@ -2069,6 +2069,53 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     {% endif %}
   </div>
 
+  {% if r.lat and r.lng %}
+  <script>
+  document.addEventListener('DOMContentLoaded', function(){
+    var el=document.getElementById('nearby'); if(!el) return;
+    var lat=el.getAttribute('data-lat'), lng=el.getAttribute('data-lng');
+    var body=document.getElementById('nb-body');
+    var CAT=[['transport','🚉','การเดินทาง'],['edu','🎓','การศึกษา'],['health','🏥','สุขภาพ'],['life','🛒','ใช้ชีวิต/ช้อปปิ้ง']];
+    var DATA=null, R=5000;
+    function fd(m){ return m<1000 ? m+' ม.' : (m/1000).toFixed(1)+' กม.'; }
+    function render(){
+      if(!DATA) return;
+      var h='<div class="grid gap-2">';
+      CAT.forEach(function(c){
+        var d=DATA[c[0]]||{near:[],c1:0,c3:0,c5:0};
+        var cnt = R===1000?d.c1 : R===3000?d.c3 : d.c5;
+        var items=(d.near||[]).filter(function(x){return x.dist<=R;});
+        h+='<div class="border rounded-lg p-3">'
+          +'<div class="flex items-center justify-between"><div class="font-medium text-sm">'+c[1]+' '+c[2]+'</div>'
+          +'<div class="text-sm"><span class="font-semibold">'+cnt+'</span> <span class="text-slate-400 text-xs">แห่ง</span></div></div>';
+        if(items.length){
+          h+='<div class="mt-1.5 flex flex-wrap gap-1">';
+          items.slice(0,6).forEach(function(x){
+            h+='<span class="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">'+(x.name||x.sub)+' · '+fd(x.dist)+'</span>';
+          });
+          h+='</div>';
+        } else { h+='<div class="mt-1 text-xs text-slate-400">ไม่พบในรัศมีนี้</div>'; }
+        h+='</div>';
+      });
+      body.innerHTML=h+'</div>';
+    }
+    document.querySelectorAll('.nb-tab').forEach(function(b){
+      b.addEventListener('click',function(){
+        R=parseInt(b.getAttribute('data-r'),10);
+        document.querySelectorAll('.nb-tab').forEach(function(x){x.removeAttribute('style');x.className='nb-tab border rounded-full px-3 py-1';});
+        b.className='nb-tab border rounded-full px-3 py-1'; b.setAttribute('style','background:var(--ink);color:#fff;border-color:var(--ink)');
+        render();
+      });
+    });
+    fetch('/api/nearby?lat='+encodeURIComponent(lat)+'&lng='+encodeURIComponent(lng))
+      .then(function(r){return r.json();}).then(function(res){
+        if(res&&res.ok){ DATA=res.data; render(); }
+        else { body.innerHTML='<span class="text-amber-600 text-sm">'+((res&&res.message)||'ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ')+'</span>'; }
+      }).catch(function(){ body.innerHTML='<span class="text-amber-600 text-sm">ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ ลองรีเฟรช</span>'; });
+  });
+  </script>
+  {% endif %}
+
   {% if r.flags %}
   <div class="sheet p-4" id="why">
     <h2 class="font-semibold mb-3">ทำไมได้เกรดนี้ — ข้อดีข้อเสียที่ระบบตรวจพบ</h2>
@@ -2209,6 +2256,23 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     function copyLink(b){navigator.clipboard.writeText(location.href).then(function(){var t=b.textContent;b.textContent='คัดลอกแล้ว ✓';setTimeout(function(){b.textContent=t;},1500);});}
     calcMortgage();
   </script>
+  {% endif %}
+
+  {% if r.lat and r.lng %}
+  <div class="sheet p-4" id="nearby" data-lat="{{ r.lat }}" data-lng="{{ r.lng }}">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <h2 class="font-semibold text-sm">📍 รอบทรัพย์นี้</h2>
+      <div class="flex gap-1 text-[11px]">
+        <button data-r="1000" class="nb-tab border rounded-full px-2.5 py-0.5">1 กม.</button>
+        <button data-r="3000" class="nb-tab border rounded-full px-2.5 py-0.5">3 กม.</button>
+        <button data-r="5000" class="nb-tab border rounded-full px-2.5 py-0.5" style="background:var(--ink);color:#fff;border-color:var(--ink)">5 กม.</button>
+      </div>
+    </div>
+    <div id="nb-body" class="mt-3 text-sm text-slate-500">
+      <span class="inline-flex items-center gap-2"><span class="animate-pulse">⏳</span> กำลังวิเคราะห์รอบทรัพย์…</span>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-2">สถานที่จาก OpenStreetMap — บางพื้นที่อาจไม่ครบ</p>
+  </div>
   {% endif %}
 
   {% if r.forecast %}
@@ -4532,6 +4596,180 @@ def map_view(request: Request, token: str = Query("")):
 
 _MAP_CACHE: dict = {}          # geojson แผนที่ (เหมือนกันทุกคน) — cache กันสร้างซ้ำ
 _MAP_TTL = 600                 # 10 นาที
+
+# ── "รอบทรัพย์นี้" — วิเคราะห์ POI รัศมี 1/3/5 กม. จาก OpenStreetMap (Overpass) ──
+_OSM_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+_POI_CACHE_DAYS = 45           # cache ผลต่อพิกัดกี่วัน
+_NEARBY_RADIUS = 5000          # เมตร
+
+
+def _haversine_m(lat1, lng1, lat2, lng2):
+    import math
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _poi_category(tags: dict) -> str | None:
+    """แม็พ OSM tags -> หมวดของเรา (transport/edu/health/life)"""
+    a = tags.get("amenity", "")
+    s = tags.get("shop", "")
+    rw = tags.get("railway", "")
+    pt = tags.get("public_transport", "")
+    le = tags.get("leisure", "")
+    if rw in ("station", "halt") or pt == "station" or a == "bus_station" \
+            or tags.get("aeroway") == "aerodrome":
+        return "transport"
+    if a in ("school", "university", "college", "kindergarten"):
+        return "edu"
+    if a in ("hospital", "clinic", "doctors") or tags.get("healthcare"):
+        return "health"
+    if s in ("mall", "supermarket", "convenience", "department_store") \
+            or a in ("marketplace", "bank", "fuel") or le == "park":
+        return "life"
+    return None
+
+
+def _poi_subtype(tags: dict) -> str:
+    a = tags.get("amenity", ""); s = tags.get("shop", ""); le = tags.get("leisure", "")
+    rw = tags.get("railway", ""); pt = tags.get("public_transport", "")
+    m = {"school": "โรงเรียน", "university": "มหาวิทยาลัย", "college": "วิทยาลัย",
+         "kindergarten": "อนุบาล", "hospital": "โรงพยาบาล", "clinic": "คลินิก",
+         "doctors": "คลินิก", "marketplace": "ตลาด", "bank": "ธนาคาร", "fuel": "ปั๊มน้ำมัน",
+         "bus_station": "สถานีขนส่ง"}
+    ms = {"mall": "ห้างสรรพสินค้า", "department_store": "ห้างสรรพสินค้า",
+          "supermarket": "ซูเปอร์มาร์เก็ต", "convenience": "ร้านสะดวกซื้อ"}
+    if rw in ("station", "halt") or pt == "station":
+        return "สถานีรถไฟฟ้า/รถไฟ"
+    if le == "park":
+        return "สวนสาธารณะ"
+    return m.get(a) or ms.get(s) or "สถานที่"
+
+
+def _overpass_query(lat: float, lng: float) -> str:
+    r = _NEARBY_RADIUS
+    ar = f"(around:{r},{lat},{lng})"
+    parts = [
+        f'node["railway"~"^(station|halt)$"]{ar};',
+        f'node["public_transport"="station"]{ar};',
+        f'node["amenity"="bus_station"]{ar};',
+        f'node["aeroway"="aerodrome"]{ar};way["aeroway"="aerodrome"]{ar};',
+        f'node["amenity"~"^(school|university|college|kindergarten)$"]{ar};',
+        f'way["amenity"~"^(school|university|college)$"]{ar};',
+        f'node["amenity"~"^(hospital|clinic|doctors)$"]{ar};',
+        f'way["amenity"="hospital"]{ar};',
+        f'node["shop"~"^(mall|supermarket|convenience|department_store)$"]{ar};',
+        f'way["shop"~"^(mall|department_store|supermarket)$"]{ar};',
+        f'node["amenity"~"^(marketplace|bank|fuel)$"]{ar};',
+        f'node["leisure"="park"]{ar};way["leisure"="park"]{ar};',
+    ]
+    return "[out:json][timeout:25];(" + "".join(parts) + ");out center tags 600;"
+
+
+def _build_nearby(lat: float, lng: float, elements: list) -> dict:
+    """จัดหมวด + คิดระยะ + นับ 1/3/5 กม. + เก็บที่ใกล้สุดต่อหมวด"""
+    cats = {k: [] for k in ("transport", "edu", "health", "life")}
+    seen = set()
+    for el in elements:
+        tags = el.get("tags") or {}
+        cat = _poi_category(tags)
+        if not cat:
+            continue
+        if el.get("type") == "node":
+            elat, elng = el.get("lat"), el.get("lon")
+        else:
+            c = el.get("center") or {}
+            elat, elng = c.get("lat"), c.get("lon")
+        if elat is None or elng is None:
+            continue
+        name = (tags.get("name:th") or tags.get("name") or tags.get("name:en") or "").strip()
+        key = (name, round(elat, 4), round(elng, 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        d = _haversine_m(lat, lng, elat, elng)
+        if d > _NEARBY_RADIUS:
+            continue
+        cats[cat].append({"name": name or _poi_subtype(tags), "sub": _poi_subtype(tags),
+                           "dist": int(round(d)), "lat": elat, "lng": elng})
+    out = {}
+    for cat, items in cats.items():
+        items.sort(key=lambda x: x["dist"])
+        out[cat] = {
+            "c1": sum(1 for i in items if i["dist"] <= 1000),
+            "c3": sum(1 for i in items if i["dist"] <= 3000),
+            "c5": len(items),
+            "near": items[:8],
+        }
+    return out
+
+
+def fetch_nearby(lat: float, lng: float) -> dict:
+    """คืนผลวิเคราะห์รอบทรัพย์ (จาก cache หรือยิง Overpass) — {ok, data} """
+    import json as _j
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    ck = f"{round(lat, 3)},{round(lng, 3)}"
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                row = conn.execute(
+                    "select data from poi_nearby_cache where coord_key=%s "
+                    "and fetched_at > now() - interval '%s days'",
+                    (ck, _POI_CACHE_DAYS)).fetchone()
+            if row:
+                return {"ok": True, "cached": True, "data": row["data"]}
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("อ่าน poi cache ล้มเหลว (รัน migration 042?): %s", str(exc)[:120])
+    ql = _overpass_query(lat, lng)
+    body = urllib.parse.urlencode({"data": ql}).encode()
+    elements = None
+    for ep in _OSM_ENDPOINTS:
+        try:
+            req = urllib.request.Request(ep, data=body, method="POST",
+                                         headers={"User-Agent": "plaengdee.com neighborhood/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                elements = _j.loads(r.read().decode("utf-8")).get("elements", [])
+            break
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("Overpass %s ล้มเหลว: %s", ep, str(exc)[:120])
+            continue
+    if elements is None:
+        return {"ok": False, "message": "ดึงข้อมูลรอบทรัพย์ไม่สำเร็จ ลองใหม่อีกครั้ง"}
+    data = _build_nearby(lat, lng, elements)
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                conn.execute(
+                    "insert into poi_nearby_cache (coord_key, data) values (%s, %s) "
+                    "on conflict (coord_key) do update set data=excluded.data, fetched_at=now()",
+                    (ck, _j.dumps(data)))
+                conn.commit()
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("เขียน poi cache ล้มเหลว: %s", str(exc)[:120])
+    return {"ok": True, "cached": False, "data": data}
+
+
+@app.get("/api/nearby")
+def api_nearby(lat: str = Query(""), lng: str = Query("")):
+    """วิเคราะห์รอบทรัพย์ (POI 1/3/5 กม.) — โหลด async จากหน้าทรัพย์"""
+    from fastapi.responses import JSONResponse
+    la, lo = _num(lat), _num(lng)
+    if la is None or lo is None or not (5.0 < la < 21.0 and 96.0 < lo < 106.0):
+        return JSONResponse({"ok": False, "message": "พิกัดไม่ถูกต้อง"}, status_code=400)
+    res = fetch_nearby(la, lo)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 502,
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/properties.geojson")
