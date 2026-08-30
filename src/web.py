@@ -1449,6 +1449,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/{{ tk }}" class="navlink whitespace-nowrap">ทรัพย์</a>
       <a href="/map{{ tk }}" class="navlink whitespace-nowrap">แผนที่</a>
       <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
+      <a href="/upcoming" class="navlink whitespace-nowrap">กำลังประมูล</a>
       <a href="/auction-results" class="navlink whitespace-nowrap">จบประมูล</a>
       <a href="/articles" class="navlink whitespace-nowrap">บทความ</a>
       <a href="/market" class="navlink whitespace-nowrap">ตลาดขาย-เช่า</a>
@@ -4473,6 +4474,100 @@ window.doRenovate=function(lid){
 {% endif %}
 {% endblock %}
 """,
+"auction_upcoming.html": """
+{% extends "layout.html" %}{% block body %}
+<section class="mb-4 rounded-2xl overflow-hidden relative" style="background:linear-gradient(135deg,#047857,var(--survey-deep))">
+  <div class="relative px-5 py-6 text-white">
+    <div class="text-[11px] tracking-widest uppercase font-semibold" style="color:rgba(255,255,255,.7)">ปฏิทินขายทอดตลาด · กรมบังคับคดี</div>
+    <h1 class="display text-2xl font-bold mt-1">กำลังจะประมูล — ทรัพย์ที่ยังไม่ถึงวันนัด</h1>
+    <p class="text-white/80 text-sm mt-1">ทรัพย์ LED ที่มีนัดขายทอดตลาดข้างหน้า จัดตามวันนัดถัดไป (ใกล้สุดก่อน) พร้อมราคาเริ่มต้นและนับถอยหลัง</p>
+    <div class="mt-4 text-sm"><span class="text-white/60">กำลังจะประมูล</span> <b class="text-lg">{{ "{:,}".format(count) }}</b> รายการ</div>
+  </div>
+</section>
+
+<div class="sheet p-3 mb-3 rounded-xl text-xs text-slate-500 flex items-start gap-2">
+  <span>💡</span><span>ราคา = ราคาเริ่มต้นประมูล · "นัด X/รวม" = นัดถัดไปจากทั้งหมดตามประกาศ · ยิ่งนัดหลังมักได้ส่วนลดลึกขึ้น (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบวันนัดกับกรมบังคับคดีอีกครั้งก่อนไป</span>
+</div>
+
+<form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
+  <label>นัดครั้งที่
+    <select name="round" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
+      <option value="0">ทุกนัด</option>
+      {% for r in round_opts %}<option value="{{ r.round }}" {% if r.round==sel_round %}selected{% endif %}>นัด {{ r.round }} ({{ r.n }})</option>{% endfor %}
+    </select></label>
+  <label>ประเภท
+    <select name="ptype" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
+      <option value="">ทุกประเภท</option>
+      {% for t in types %}<option value="{{ t.code }}" {% if t.code==ptype %}selected{% endif %}>{{ t.label }} ({{ t.n }})</option>{% endfor %}
+    </select></label>
+  <label class="ml-auto">วันนัด
+    <select name="date" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white max-w-[190px]">
+      <option value="">ทุกวัน ({{ date_opts|length }} วัน)</option>
+      {% for d in date_opts %}<option value="{{ d.iso }}" {% if d.iso==date %}selected{% endif %}>{{ d.label }} ({{ d.n }})</option>{% endfor %}
+    </select></label>
+  <label>จังหวัด
+    <select name="province" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
+      <option value="">ทุกจังหวัด</option>
+      {% for p in provinces %}<option value="{{ p }}" {% if p==province %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select></label>
+</form>
+
+{% if not groups %}
+<div class="sheet p-10 text-center text-slate-500">
+  ยังไม่มีทรัพย์ที่กำลังจะประมูลในเงื่อนไขนี้ — ลองล้างตัวกรอง หรือรอ scraper ดึงประกาศนัดใหม่จากกรมบังคับคดี
+</div>
+{% else %}
+{% for grp in groups %}
+<div class="flex items-center gap-2 mt-5 mb-2">
+  <h2 class="font-semibold text-slate-700">วันนัด {{ grp.label }}</h2>
+  <span class="text-[11px] px-2 py-0.5 rounded-full {% if grp.days_left<=3 %}bg-rose-100 text-rose-700{% elif grp.days_left<=7 %}bg-amber-100 text-amber-800{% else %}bg-slate-100 text-slate-500{% endif %}">
+    {% if grp.days_left==0 %}วันนี้{% elif grp.days_left==1 %}พรุ่งนี้{% else %}อีก {{ grp.days_left }} วัน{% endif %}</span>
+  <span class="text-xs text-slate-400">{{ grp.rows|length }} รายการ</span>
+  <span class="flex-1 border-t" style="border-color:var(--rule)"></span>
+</div>
+<div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+  {% for r in grp.rows %}
+  <a href="/p/led_auction/{{ r.ref }}" class="sheet p-3.5 block hover:shadow-md transition">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <div class="font-medium text-sm line-clamp-1">{{ type_labels.get(r.property_type, 'ทรัพย์') }}
+          {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}</div>
+        <div class="text-xs text-slate-400 mt-0.5">
+          <span class="text-slate-500 font-medium">นัด {{ r.next_round }}{% if r.total_rounds %}/{{ r.total_rounds }}{% endif %}</span>
+          {% if r.province %} · {{ r.province }}{% endif %}</div>
+        {% if r.title %}<div class="text-[11px] text-slate-400 line-clamp-1 mt-0.5">{{ r.title }}</div>{% endif %}
+      </div>
+      {% if r.grade %}<span class="seal g-{{ r.grade }}">{{ r.grade }}</span>{% endif %}
+    </div>
+    <div class="mt-2.5 flex items-end justify-between gap-2">
+      <div>
+        <div class="text-[11px] text-slate-400">ราคาเริ่มต้น</div>
+        <div class="text-lg font-bold leading-tight" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.opening_price or 0) }}</div>
+        {% if r.appraised_price %}<div class="text-[11px] text-slate-400">ประเมิน {{ "{:,.0f}".format(r.appraised_price) }}</div>{% endif %}
+      </div>
+      <div class="text-right">
+        <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {% if r.days_left<=3 %}bg-rose-100 text-rose-700{% elif r.days_left<=7 %}bg-amber-100 text-amber-800{% else %}bg-emerald-50 text-emerald-700{% endif %}">
+          {% if r.days_left==0 %}วันนี้{% elif r.days_left==1 %}พรุ่งนี้{% else %}อีก {{ r.days_left }} วัน{% endif %}</span>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endfor %}
+
+{% if pages > 1 %}
+<nav class="mt-6 flex items-center justify-center gap-1 flex-wrap">
+  {% set qs %}{% if province %}&province={{ province }}{% endif %}{% if ptype %}&ptype={{ ptype }}{% endif %}{% if date %}&date={{ date }}{% endif %}{% if sel_round %}&round={{ sel_round }}{% endif %}{% endset %}
+  {% if page > 1 %}<a href="/upcoming?page={{ page-1 }}{{ qs }}" class="px-3 py-1.5 rounded-lg border text-sm text-slate-600 hover:bg-slate-50">← ก่อนหน้า</a>{% endif %}
+  <span class="px-3 py-1.5 text-sm text-slate-500">หน้า {{ page }}/{{ pages }}</span>
+  {% if page < pages %}<a href="/upcoming?page={{ page+1 }}{{ qs }}" class="px-3 py-1.5 rounded-lg border text-sm text-slate-600 hover:bg-slate-50">ถัดไป →</a>{% endif %}
+</nav>
+{% endif %}
+{% endif %}
+
+<p class="text-[11px] text-slate-400 mt-6 text-center">วันนัดจากประกาศขายทอดตลาด กรมบังคับคดี · เลขนัดอิงตามประกาศ (รีเซ็ตเมื่อประกาศใหม่) · ควรตรวจสอบกับกรมฯ ก่อนตัดสินใจ</p>
+{% endblock %}
+""",
 "auction_results.html": """
 {% extends "layout.html" %}{% block body %}
 <section class="mb-4 rounded-2xl overflow-hidden relative" style="background:linear-gradient(135deg,var(--ink),var(--survey-deep))">
@@ -4565,11 +4660,16 @@ window.doRenovate=function(lid){
 </div>
 <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
   {% for r in grp.rows %}
+  {% if r.ref %}
   <a href="/p/led_auction/{{ r.ref }}" class="sheet p-3.5 block hover:shadow-md transition">
+  {% else %}
+  <div class="sheet p-3.5 block" style="opacity:.92">
+  {% endif %}
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0">
         <div class="font-medium text-sm line-clamp-1">{{ type_labels.get(r.property_type, r.property_type_th or 'ทรัพย์') }}
-          {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}</div>
+          {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}
+          {% if not r.ref %}<span class="text-[10px] text-slate-400 font-normal">(ยังไม่มีในระบบ)</span>{% endif %}</div>
         <div class="text-xs text-slate-400 mt-0.5">{% if r.round %}<span class="text-slate-500 font-medium">นัด {{ r.round }}</span> · {% endif %}{{ r.province or '' }}{% if r.court %} · ศาล{{ r.court }}{% endif %}</div>
         {% if r.case_no %}<div class="text-[11px] text-slate-400 mt-0.5">คดีแดง {{ r.case_no }}{% if r.deed and r.deed != '-' %} · โฉนด {{ r.deed }}{% endif %}</div>{% endif %}
         {% if r.plaintiff %}<div class="text-[11px] text-slate-400 line-clamp-1">โจทก์ {{ r.plaintiff }}</div>{% endif %}
@@ -4597,7 +4697,7 @@ window.doRenovate=function(lid){
       </div>
       {% endif %}
     </div>
-  </a>
+  {% if r.ref %}</a>{% else %}</div>{% endif %}
   {% endfor %}
 </div>
 {% endfor %}
@@ -6555,22 +6655,20 @@ def auction_results(request: Request, result: str = Query(""),
     if not DEMO_MODE:
         try:
             from core.db import connect
-            cte = ("""with latest as (
-                        select distinct on (matched_ref) matched_ref as ref, sale_date, result,
-                               is_sold, sold_price, appraised_price, property_type_th, court, deed,
-                               case_no, plaintiff
-                          from led_auction_results where matched_ref is not null
-                         order by matched_ref, sale_date desc)""")
             # นัดครั้งที่ = biddateN (พ.ศ. YYYYMMDD) ของทรัพย์ที่จับคู่ ตรงกับวันขาย
             _bexp = "to_char(l.sale_date + interval '543 years','YYYYMMDD')"
             rnd_expr = ("(case "
                         + " ".join(f"when {_bexp}=ls.raw_fields->'_open_post'->>'biddate{i}' then {i}"
                                    for i in range(1, 9))
                         + " end)")
-            # snapshot ล่าสุดต่อทรัพย์ (กัน fan-out — 1 ref มีหลาย snapshot)
+            # ดึงผลทุกแถวตามวันจริง (ไม่ dedupe) รวมรายการที่จับคู่ทรัพย์ไม่ได้ (unmatched) ด้วย
+            base = "from led_auction_results l"
+            join = ("left join v_listings_with_grade g "
+                    "on g.source_code='led_auction' and g.external_ref = l.matched_ref")
+            # snapshot ล่าสุดต่อทรัพย์ (สำหรับคำนวณนัด) — กัน fan-out
             jr = ("left join (select distinct on (external_ref) external_ref, raw_fields "
                   "from listing_snapshots where source_code='led_auction' "
-                  "order by external_ref, observed_at desc) ls on ls.external_ref = l.ref")
+                  "order by external_ref, observed_at desc) ls on ls.external_ref = l.matched_ref")
             conds = ["1=1"]
             params: list = []
             if result == "sold":
@@ -6586,37 +6684,34 @@ def auction_results(request: Request, result: str = Query(""),
             where = " and ".join(conds)
             ps = 60
             off = (page - 1) * ps
-            join = ("left join v_listings_with_grade g "
-                    "on g.source_code='led_auction' and g.external_ref = l.ref")
             with connect() as conn:
                 total = conn.execute(
-                    f"{cte} select count(*) n from latest l {join} {jr} where {where}",
+                    f"select count(*) n {base} {join} {jr} where {where}",
                     tuple(params)).fetchone()["n"]
                 rows = [dict(r) for r in conn.execute(f"""
-                    {cte}
-                    select l.ref, l.sale_date, l.result, l.is_sold, l.sold_price,
+                    select l.matched_ref as ref, l.sale_date, l.result, l.is_sold, l.sold_price,
                            l.appraised_price, l.property_type_th, l.court, l.case_no,
                            l.plaintiff, l.deed, {rnd_expr} as round,
                            g.province, g.district, g.subdistrict, g.property_type, g.grade
-                      from latest l {join} {jr}
+                      {base} {join} {jr}
                      where {where}
                      order by l.sale_date desc, l.is_sold desc, l.sold_price desc nulls last
                      limit {ps} offset {off}""", tuple(params)).fetchall()]
                 st = conn.execute(
-                    f"{cte} select count(*) n, count(*) filter (where is_sold) sold, "
-                    f"coalesce(sum(sold_price) filter (where is_sold),0) sum_sold from latest l"
-                ).fetchone()
+                    "select count(*) n, count(*) filter (where is_sold) sold, "
+                    "coalesce(sum(sold_price) filter (where is_sold),0) sum_sold "
+                    "from led_auction_results").fetchone()
                 stats = dict(st)
                 provinces = [r["province"] for r in conn.execute(
-                    f"{cte} select distinct g.province from latest l {join} "
+                    f"select distinct g.province {base} {join} "
                     f"where g.province is not null order by 1").fetchall()]
                 date_opts = [{"iso": r["sale_date"].isoformat(),
                               "label": _thai_date(r["sale_date"]), "n": r["n"]}
                              for r in conn.execute(
-                    f"{cte} select sale_date, count(*) n from latest l "
-                    f"group by sale_date order by sale_date desc").fetchall()]
+                    "select sale_date, count(*) n from led_auction_results "
+                    "group by sale_date order by sale_date desc").fetchall()]
                 round_opts = [{"round": r["rnd"], "n": r["n"]} for r in conn.execute(
-                    f"{cte} select {rnd_expr} rnd, count(*) n from latest l {jr} "
+                    f"select {rnd_expr} rnd, count(*) n {base} {jr} "
                     f"group by 1 having {rnd_expr} is not null order by 1").fetchall()]
             # เตรียมข้อมูลแสดง: %ต่างจากประเมิน + จัดกลุ่มตามวันขาย
             for r in rows:
@@ -6642,6 +6737,109 @@ def auction_results(request: Request, result: str = Query(""),
         date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
         stats=stats, astats=_auction_stats(), canonical=_abs_url(request, "/auction-results"),
         og_desc="ผลการขายทอดตลาดกรมบังคับคดี — ทรัพย์ไหนขายจบที่ราคาเท่าไหร่ หรือไม่มีผู้สู้ราคา ดูตามวันขาย",
+        **ubase(request))
+
+
+@app.get("/upcoming", response_class=HTMLResponse)
+def upcoming_auctions(request: Request, province: str = Query(""), date: str = Query(""),
+                      ptype: str = Query(""), sel_round: int = Query(0, alias="round"),
+                      page: int = Query(1, ge=1)):
+    """หน้า "กำลังจะประมูล" — ทรัพย์ LED ที่นัดถัดไปยังไม่ถึง (จาก biddate) จัดตามวันนัดถัดไป (ใกล้สุดก่อน)"""
+    import datetime as _dt
+    if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        date = ""
+    if sel_round not in range(1, 9):
+        sel_round = 0
+    today = _dt.date.today()
+    groups: list = []
+    total = 0
+    provinces: list = []
+    date_opts: list = []
+    round_opts: list = []
+    types: list = []
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+
+            def _bud(s):
+                try:
+                    return _dt.date(int(s[:4]) - 543, int(s[4:6]), int(s[6:8]))
+                except (ValueError, TypeError, IndexError):
+                    return None
+
+            with connect() as conn:
+                raw = conn.execute("""
+                    select g.external_ref ref, g.province, g.district, g.subdistrict,
+                           g.property_type, g.grade, g.opening_price, g.appraised_price,
+                           g.list_price, g.special_price, g.title, g.image_url,
+                           g.land_area_sqwa, g.usable_area_sqm,
+                           ls.raw_fields->'_open_post' op
+                      from v_listings_with_grade g
+                      join (select distinct on (external_ref) external_ref, raw_fields
+                              from listing_snapshots where source_code='led_auction'
+                             order by external_ref, observed_at desc) ls
+                        on ls.external_ref = g.external_ref
+                     where g.source_code = 'led_auction'
+                """).fetchall()
+            items: list = []
+            for r in raw:
+                op = r["op"] or {}
+                futs = []
+                for i in range(1, 9):
+                    v = op.get(f"biddate{i}")
+                    dd = _bud(v) if v else None
+                    if dd and dd >= today:
+                        futs.append((dd, i))
+                if not futs:
+                    continue
+                nd, ni = min(futs)
+                it = dict(r); it.pop("op", None)
+                it["next_date"] = nd
+                it["next_round"] = ni
+                it["days_left"] = (nd - today).days
+                it["total_rounds"] = sum(1 for i in range(1, 9) if op.get(f"biddate{i}"))
+                items.append(it)
+            from collections import Counter
+            dcnt = Counter(it["next_date"] for it in items)
+            date_opts = [{"iso": d.isoformat(), "label": _thai_date(d), "n": n}
+                         for d, n in sorted(dcnt.items())]
+            rcnt = Counter(it["next_round"] for it in items)
+            round_opts = [{"round": rr, "n": rcnt[rr]} for rr in sorted(rcnt)]
+            provinces = sorted({it["province"] for it in items if it["province"]})
+            tcnt = Counter(it["property_type"] for it in items if it["property_type"])
+            types = [{"code": c, "label": TYPE_LABELS.get(c, c), "n": tcnt[c]}
+                     for c in sorted(tcnt, key=lambda x: -tcnt[x])]
+
+            def _keep(it):
+                if province and it["province"] != province:
+                    return False
+                if ptype and it["property_type"] != ptype:
+                    return False
+                if sel_round and it["next_round"] != sel_round:
+                    return False
+                if date and it["next_date"].isoformat() != date:
+                    return False
+                return True
+
+            items = [it for it in items if _keep(it)]
+            items.sort(key=lambda x: (x["next_date"], -(float(x["opening_price"] or 0))))
+            total = len(items)
+            ps = 60
+            items = items[(page - 1) * ps: page * ps]
+            from itertools import groupby
+            for d, grp in groupby(items, key=lambda x: x["next_date"]):
+                groups.append({"label": _thai_date(d), "days_left": (d - today).days,
+                               "rows": list(grp)})
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("upcoming ล้มเหลว: %s", str(exc)[:150])
+    pages = max(1, -(-total // 60))
+    return env.get_template("auction_upcoming.html").render(
+        title="กำลังจะประมูล — ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
+        page=page, pages=pages, province=province, provinces=provinces,
+        date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
+        ptype=ptype, types=types, type_labels=TYPE_LABELS,
+        canonical=_abs_url(request, "/upcoming"),
+        og_desc="ทรัพย์ขายทอดตลาดกรมบังคับคดีที่กำลังจะถึงวันประมูล — ราคาเริ่มต้น วันนัด และนับถอยหลัง",
         **ubase(request))
 
 
