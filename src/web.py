@@ -4390,7 +4390,7 @@ window.doRenovate=function(lid){
 <p class="text-[11px] text-slate-400 mt-6 text-center">ข้อมูลจากรายงานผลการขายทอดตลาด กรมบังคับคดี · จับคู่กับทรัพย์ที่ระบบเก็บก่อนประมูล · ตัวเลขจะแม่นขึ้นเมื่อดึงผลครบทุกหน่วยงาน · ควรตรวจสอบกับกรมฯ ก่อนตัดสินใจ</p>
 
 {% if astats.n > 0 %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+<script src="/static/echarts.min.js"></script>
 <script>
 (function(){
   var A = {{ astats_json|safe }};
