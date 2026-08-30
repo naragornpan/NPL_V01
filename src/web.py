@@ -6837,7 +6837,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
         title="กำลังจะประมูล — ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
         page=page, pages=pages, province=province, provinces=provinces,
         date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
-        ptype=ptype, types=types, type_labels=TYPE_LABELS,
+        ptype=ptype, types=types,
         canonical=_abs_url(request, "/upcoming"),
         og_desc="ทรัพย์ขายทอดตลาดกรมบังคับคดีที่กำลังจะถึงวันประมูล — ราคาเริ่มต้น วันนัด และนับถอยหลัง",
         **ubase(request))
