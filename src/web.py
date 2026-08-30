@@ -4529,13 +4529,18 @@ window.doRenovate=function(lid){
 <form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
   <div class="flex gap-1">
     {% for v,lbl in [('','ทั้งหมด'),('sold','ขายได้'),('nobid','ไม่มีผู้สู้ราคา')] %}
-    <a href="/auction-results?result={{ v }}{% if province %}&province={{ province }}{% endif %}{% if date %}&date={{ date }}{% endif %}"
+    <a href="/auction-results?result={{ v }}{% if province %}&province={{ province }}{% endif %}{% if date %}&date={{ date }}{% endif %}{% if sel_round %}&round={{ sel_round }}{% endif %}"
        class="px-3 py-1.5 rounded-lg border {% if result==v %}text-white{% else %}text-slate-600 hover:bg-slate-50{% endif %}"
        style="{% if result==v %}background:var(--survey);border-color:var(--survey){% endif %}">{{ lbl }}</a>
     {% endfor %}
   </div>
   {% if result %}<input type="hidden" name="result" value="{{ result }}">{% endif %}
-  <label class="ml-auto">วันขาย
+  <label class="ml-auto">นัดครั้งที่
+    <select name="round" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
+      <option value="0">ทุกนัด</option>
+      {% for r in round_opts %}<option value="{{ r.round }}" {% if r.round==sel_round %}selected{% endif %}>นัด {{ r.round }} ({{ r.n }})</option>{% endfor %}
+    </select></label>
+  <label>วันขาย
     <select name="date" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white max-w-[190px]">
       <option value="">ทุกวัน ({{ date_opts|length }} วัน)</option>
       {% for d in date_opts %}<option value="{{ d.iso }}" {% if d.iso==date %}selected{% endif %}>{{ d.label }} ({{ d.n }})</option>{% endfor %}
@@ -4565,7 +4570,7 @@ window.doRenovate=function(lid){
       <div class="min-w-0">
         <div class="font-medium text-sm line-clamp-1">{{ type_labels.get(r.property_type, r.property_type_th or 'ทรัพย์') }}
           {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}</div>
-        <div class="text-xs text-slate-400 mt-0.5">{{ r.province or '' }}{% if r.court %} · ศาล{{ r.court }}{% endif %}</div>
+        <div class="text-xs text-slate-400 mt-0.5">{% if r.round %}<span class="text-slate-500 font-medium">นัด {{ r.round }}</span> · {% endif %}{{ r.province or '' }}{% if r.court %} · ศาล{{ r.court }}{% endif %}</div>
         {% if r.case_no %}<div class="text-[11px] text-slate-400 mt-0.5">คดีแดง {{ r.case_no }}{% if r.deed and r.deed != '-' %} · โฉนด {{ r.deed }}{% endif %}</div>{% endif %}
         {% if r.plaintiff %}<div class="text-[11px] text-slate-400 line-clamp-1">โจทก์ {{ r.plaintiff }}</div>{% endif %}
       </div>
@@ -6535,14 +6540,17 @@ def _auction_stats(days: int = 0) -> dict:
 @app.get("/auction-results", response_class=HTMLResponse)
 def auction_results(request: Request, result: str = Query(""),
                     province: str = Query(""), date: str = Query(""),
-                    page: int = Query(1, ge=1)):
+                    sel_round: int = Query(0, alias="round"), page: int = Query(1, ge=1)):
     """หน้าสรุป "จบประมูล" — ผลการขายทอดตลาด LED (ราคาจบ/ไม่มีผู้สู้ราคา) จัดตามวันขาย"""
     if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         date = ""
+    if sel_round not in range(1, 9):
+        sel_round = 0
     groups: list = []
     total = 0
     provinces: list = []
     date_opts: list = []
+    round_opts: list = []
     stats = {"n": 0, "sold": 0, "sum_sold": 0}
     if not DEMO_MODE:
         try:
@@ -6553,6 +6561,16 @@ def auction_results(request: Request, result: str = Query(""),
                                case_no, plaintiff
                           from led_auction_results where matched_ref is not null
                          order by matched_ref, sale_date desc)""")
+            # นัดครั้งที่ = biddateN (พ.ศ. YYYYMMDD) ของทรัพย์ที่จับคู่ ตรงกับวันขาย
+            _bexp = "to_char(l.sale_date + interval '543 years','YYYYMMDD')"
+            rnd_expr = ("(case "
+                        + " ".join(f"when {_bexp}=ls.raw_fields->'_open_post'->>'biddate{i}' then {i}"
+                                   for i in range(1, 9))
+                        + " end)")
+            # snapshot ล่าสุดต่อทรัพย์ (กัน fan-out — 1 ref มีหลาย snapshot)
+            jr = ("left join (select distinct on (external_ref) external_ref, raw_fields "
+                  "from listing_snapshots where source_code='led_auction' "
+                  "order by external_ref, observed_at desc) ls on ls.external_ref = l.ref")
             conds = ["1=1"]
             params: list = []
             if result == "sold":
@@ -6563,6 +6581,8 @@ def auction_results(request: Request, result: str = Query(""),
                 conds.append("g.province = %s"); params.append(province)
             if date:
                 conds.append("l.sale_date = %s::date"); params.append(date)
+            if sel_round:
+                conds.append(f"{rnd_expr} = %s"); params.append(sel_round)
             where = " and ".join(conds)
             ps = 60
             off = (page - 1) * ps
@@ -6570,15 +6590,15 @@ def auction_results(request: Request, result: str = Query(""),
                     "on g.source_code='led_auction' and g.external_ref = l.ref")
             with connect() as conn:
                 total = conn.execute(
-                    f"{cte} select count(*) n from latest l {join} where {where}",
+                    f"{cte} select count(*) n from latest l {join} {jr} where {where}",
                     tuple(params)).fetchone()["n"]
                 rows = [dict(r) for r in conn.execute(f"""
                     {cte}
                     select l.ref, l.sale_date, l.result, l.is_sold, l.sold_price,
                            l.appraised_price, l.property_type_th, l.court, l.case_no,
-                           l.plaintiff, l.deed,
+                           l.plaintiff, l.deed, {rnd_expr} as round,
                            g.province, g.district, g.subdistrict, g.property_type, g.grade
-                      from latest l {join}
+                      from latest l {join} {jr}
                      where {where}
                      order by l.sale_date desc, l.is_sold desc, l.sold_price desc nulls last
                      limit {ps} offset {off}""", tuple(params)).fetchall()]
@@ -6595,6 +6615,9 @@ def auction_results(request: Request, result: str = Query(""),
                              for r in conn.execute(
                     f"{cte} select sale_date, count(*) n from latest l "
                     f"group by sale_date order by sale_date desc").fetchall()]
+                round_opts = [{"round": r["rnd"], "n": r["n"]} for r in conn.execute(
+                    f"{cte} select {rnd_expr} rnd, count(*) n from latest l {jr} "
+                    f"group by 1 having {rnd_expr} is not null order by 1").fetchall()]
             # เตรียมข้อมูลแสดง: %ต่างจากประเมิน + จัดกลุ่มตามวันขาย
             for r in rows:
                 ap, sp = r.get("appraised_price"), r.get("sold_price")
@@ -6616,7 +6639,7 @@ def auction_results(request: Request, result: str = Query(""),
     return env.get_template("auction_results.html").render(
         title="ผลจบประมูล ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
         page=page, pages=pages, result=result, province=province, provinces=provinces,
-        date=date, date_opts=date_opts,
+        date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
         stats=stats, astats=_auction_stats(), canonical=_abs_url(request, "/auction-results"),
         og_desc="ผลการขายทอดตลาดกรมบังคับคดี — ทรัพย์ไหนขายจบที่ราคาเท่าไหร่ หรือไม่มีผู้สู้ราคา ดูตามวันขาย",
         **ubase(request))
