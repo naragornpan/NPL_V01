@@ -2261,7 +2261,11 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <div class="text-xs text-slate-500">🔨 ผลการประมูล · นัดขาย {{ auc_result.date_label }}</div>
     {% if auc_result.is_sold %}
     <div class="text-xl font-bold mt-0.5" style="color:var(--survey-deep)">✓ ขายได้ {{ "{:,.0f}".format(auc_result.sold_price or 0) }} บาท</div>
-    {% if auc_result.pct is not none %}<div class="text-sm {{ 'text-emerald-600' if auc_result.pct>=0 else 'text-red-500' }}">{{ '+' if auc_result.pct>=0 else '' }}{{ auc_result.pct }}% จากราคาประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }}</div>{% endif %}
+    {% if auc_result.suspect %}
+    <div class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-1 leading-snug">
+      ⚠️ ราคาต่ำผิดปกติเทียบประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }} — มักเป็นการขายเฉพาะส่วน หรือโจทก์/เจ้าหนี้ซื้อได้แล้วหักกับหนี้ (ไม่ใช่ราคาตลาด) ควรตรวจสอบกับกรมบังคับคดี
+    </div>
+    {% elif auc_result.pct is not none %}<div class="text-sm {{ 'text-emerald-600' if auc_result.pct>=0 else 'text-red-500' }}">{{ '+' if auc_result.pct>=0 else '' }}{{ auc_result.pct }}% จากราคาประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }}</div>{% endif %}
     {% else %}
     <div class="text-lg font-semibold text-slate-600 mt-0.5">{{ auc_result.result or 'ไม่มีผู้สู้ราคา' }}</div>
     <div class="text-xs text-slate-400">ราคาประเมิน {{ "{:,.0f}".format(auc_result.appraised_price or 0) }} บาท</div>
@@ -4280,6 +4284,11 @@ window.doRenovate=function(lid){
   <a href="/auction-results" class="text-sm brandlink">← กลับหน้าจบประมูล</a>
 </div>
 <p class="text-sm text-slate-500 mb-3">วิเคราะห์ผลการขายทอดตลาดกรมบังคับคดี เพื่อวางกลยุทธ์ — รอนัดไหน ประเภท/จังหวัดไหน ได้ส่วนลดดีและมีโอกาสขายออก</p>
+{% if astats.outliers and astats.outliers > 0 %}
+<div class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 leading-snug">
+  ℹ️ กันรายการราคาต่ำผิดปกติ (ขายได้ &lt; 20% ของประเมิน — มักเป็นเลขคงที่เช่น 50,000 จากการขายเฉพาะส่วน/โจทก์ซื้อได้แล้วหักหนี้) ออกจากสถิติส่วนลดแล้ว {{ astats.outliers }} รายการ เพื่อไม่ให้ค่ากลางเพี้ยน
+</div>
+{% endif %}
 
 <div class="flex items-center gap-2 mb-4 flex-wrap">
   <span class="text-xs text-slate-400">ช่วงวันขาย:</span>
@@ -4571,7 +4580,8 @@ window.doRenovate=function(lid){
       <div class="text-right">
         <span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-800">✓ ขายได้</span>
         <div class="text-lg font-bold leading-tight mt-0.5" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.sold_price or 0) }}</div>
-        {% if r.pct is not none %}<div class="text-[11px] {{ 'text-emerald-600' if r.pct>=0 else 'text-red-500' }}">{{ '+' if r.pct>=0 else '' }}{{ r.pct }}% จากประเมิน</div>{% endif %}
+        {% if r.suspect %}<div class="text-[11px] text-amber-600" title="ราคาต่ำผิดปกติ — มักเป็นขายเฉพาะส่วน/โจทก์ซื้อได้แล้วหักหนี้ ไม่ใช่ราคาตลาด">⚠️ ราคาต่ำผิดปกติ</div>
+        {% elif r.pct is not none %}<div class="text-[11px] {{ 'text-emerald-600' if r.pct>=0 else 'text-red-500' }}">{{ '+' if r.pct>=0 else '' }}{{ r.pct }}% จากประเมิน</div>{% endif %}
       </div>
       {% else %}
       <div class="text-right">
@@ -5095,9 +5105,11 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
                 auc_result["date_label"] = _thai_date(auc_result.get("sale_date"))
                 if auc_result.get("is_sold") and auc_result.get("appraised_price") \
                         and auc_result.get("sold_price"):
-                    auc_result["pct"] = round(
-                        (float(auc_result["sold_price"]) - float(auc_result["appraised_price"]))
-                        / float(auc_result["appraised_price"]) * 100)
+                    _ratio = float(auc_result["sold_price"]) / float(auc_result["appraised_price"])
+                    if _ratio < _AUC_OUTLIER_RATIO:
+                        auc_result["suspect"] = True                # ราคาต่ำผิดปกติ — ไม่โชว์ %
+                    else:
+                        auc_result["pct"] = round((_ratio - 1) * 100)
         except Exception as exc:                                    # noqa: BLE001
             log.warning("ดึงผลประมูลไม่สำเร็จ: %s", str(exc)[:100])
     _op = r.get("opening_price")
@@ -6389,6 +6401,10 @@ def _thai_date(d) -> str:
 
 _AUC_STATS_CACHE: dict = {}
 _AUC_STATS_TTL = 1800
+# ราคาขายได้ที่ต่ำกว่าประเมินขนาดนี้ = ผิดปกติ (มักเป็นเลขคงที่ 50,000 บนทรัพย์หลายล้าน)
+# ตีความว่าเป็นค่าตามขั้นตอน เช่น โจทก์/เจ้าหนี้เป็นผู้ซื้อได้แล้วหักกับหนี้ (หักส่วนได้ใช้แทน)
+# ไม่ใช่ราคาตลาดจริง — กันออกจากสถิติส่วนลด และติดป้ายเตือนบนการ์ด
+_AUC_OUTLIER_RATIO = 0.20
 AUC_RANGES = [(30, "30 วัน"), (90, "90 วัน"), (180, "6 เดือน"), (0, "ทั้งหมด")]
 
 
@@ -6430,7 +6446,7 @@ def _auction_stats(days: int = 0) -> dict:
         return items[:top] if top else items
 
     stats = {"rounds": [], "types": [], "provs": [], "months": [], "dist": [],
-             "n": 0, "sold": 0, "pct": 0, "sum_sold": 0, "med": None,
+             "n": 0, "sold": 0, "pct": 0, "sum_sold": 0, "med": None, "outliers": 0,
              "maxn": 1, "maxn_t": 1, "maxn_p": 1, "dmax": 1, "days": days}
     try:
         from collections import defaultdict
@@ -6458,6 +6474,7 @@ def _auction_stats(days: int = 0) -> dict:
         M = defaultdict(lambda: {"n": 0, "sold": 0, "disc": []})
         all_disc: list = []
         tn = ts = 0
+        n_outlier = 0
         sum_sold = 0.0
         for r in rows:
             op = r["op"] or {}
@@ -6468,12 +6485,20 @@ def _auction_stats(days: int = 0) -> dict:
                     rnd = i
                     break
             disc = None
+            outlier = False
             if r["is_sold"] and r["sold_price"] and r["appraised_price"]:
-                disc = (float(r["sold_price"]) - float(r["appraised_price"])) / float(r["appraised_price"]) * 100
+                _ratio = float(r["sold_price"]) / float(r["appraised_price"])
+                if _ratio < _AUC_OUTLIER_RATIO:
+                    outlier = True                                  # ต่ำผิดปกติ — กันออกจากสถิติส่วนลด
+                else:
+                    disc = (_ratio - 1) * 100
             tn += 1
             if r["is_sold"]:
                 ts += 1
-                sum_sold += float(r["sold_price"] or 0)
+                if outlier:
+                    n_outlier += 1
+                else:
+                    sum_sold += float(r["sold_price"] or 0)
                 if disc is not None:
                     all_disc.append(disc)
             if rnd:
@@ -6494,7 +6519,7 @@ def _auction_stats(days: int = 0) -> dict:
         stats = {
             "rounds": rounds, "types": types, "provs": provs, "months": months, "dist": dist,
             "n": tn, "sold": ts, "pct": round(100 * ts / tn) if tn else 0,
-            "sum_sold": round(sum_sold), "med": _med(all_disc),
+            "sum_sold": round(sum_sold), "med": _med(all_disc), "outliers": n_outlier,
             "maxn": max((x["n"] for x in rounds), default=1) or 1,
             "maxn_t": max((x["n"] for x in types), default=1) or 1,
             "maxn_p": max((x["n"] for x in provs), default=1) or 1,
@@ -6573,8 +6598,14 @@ def auction_results(request: Request, result: str = Query(""),
             # เตรียมข้อมูลแสดง: %ต่างจากประเมิน + จัดกลุ่มตามวันขาย
             for r in rows:
                 ap, sp = r.get("appraised_price"), r.get("sold_price")
-                r["pct"] = (round((float(sp) - float(ap)) / float(ap) * 100)
-                            if r["is_sold"] and ap and sp else None)
+                r["pct"] = None
+                r["suspect"] = False
+                if r["is_sold"] and ap and sp:
+                    _ratio = float(sp) / float(ap)
+                    if _ratio < _AUC_OUTLIER_RATIO:
+                        r["suspect"] = True             # ต่ำผิดปกติ — ไม่โชว์ %
+                    else:
+                        r["pct"] = round((_ratio - 1) * 100)
             from itertools import groupby
             for d, grp in groupby(rows, key=lambda x: x["sale_date"]):
                 groups.append({"label": _thai_date(d), "rows": list(grp)})
@@ -6598,7 +6629,7 @@ def auction_stats_page(request: Request, days: int = Query(0)):
         days = 0
     astats = _auction_stats(days) if not DEMO_MODE else {
         "rounds": [], "types": [], "provs": [], "months": [], "dist": [],
-        "n": 0, "sold": 0, "pct": 0, "sum_sold": 0, "med": None,
+        "n": 0, "sold": 0, "pct": 0, "sum_sold": 0, "med": None, "outliers": 0,
         "maxn": 1, "maxn_t": 1, "maxn_p": 1, "dmax": 1, "days": days}
     return env.get_template("auction_stats.html").render(
         title="แดชบอร์ดกลยุทธ์ประมูล — ทรัพย์ขายทอดตลาด", astats=astats, days=days,
