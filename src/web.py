@@ -4304,6 +4304,37 @@ window.doRenovate=function(lid){
     <div class="text-2xl font-bold" style="color:var(--survey-deep)">{{ "{:,.0f}".format(astats.sum_sold) }}</div><div class="text-xs text-slate-400">บาท</div></div>
 </div>
 
+<div class="sheet p-4 mb-4">
+  <div class="flex items-center justify-between gap-2 flex-wrap mb-3">
+    <h2 class="font-semibold">🎛️ กราฟปรับมุมมองเอง</h2>
+    <div class="flex items-center gap-3 flex-wrap text-sm">
+      <label class="flex items-center gap-1.5">
+        <span class="text-xs text-slate-400">แกน</span>
+        <select id="dimSel" class="border rounded-lg px-2 py-1.5 bg-white">
+          <option value="rounds">ตามนัดประมูล</option>
+          <option value="types">ตามประเภททรัพย์</option>
+          <option value="provs">ตามจังหวัด (Top 10)</option>
+          <option value="months">ตามเดือน</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-1.5">
+        <span class="text-xs text-slate-400">ค่า</span>
+        <select id="metSel" class="border rounded-lg px-2 py-1.5 bg-white">
+          <option value="pct">% ขายได้</option>
+          <option value="med">ส่วนลดกลาง (เทียบประเมิน)</option>
+          <option value="n">จำนวนทรัพย์</option>
+          <option value="sold">จำนวนที่ขายได้</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-1.5 text-slate-500">
+        <input type="checkbox" id="sortChk" class="rounded"> <span class="text-xs">เรียงมาก→น้อย</span>
+      </label>
+    </div>
+  </div>
+  <div id="mainChart" style="width:100%;height:380px"></div>
+  <p id="chartHint" class="text-[11px] text-slate-400 mt-1"></p>
+</div>
+
 <div class="grid gap-4 lg:grid-cols-2">
   <div class="sheet p-4">
     <h2 class="font-semibold mb-1">⏱️ ตามนัดประมูล</h2>
@@ -4357,6 +4388,80 @@ window.doRenovate=function(lid){
 {% endif %}
 
 <p class="text-[11px] text-slate-400 mt-6 text-center">ข้อมูลจากรายงานผลการขายทอดตลาด กรมบังคับคดี · จับคู่กับทรัพย์ที่ระบบเก็บก่อนประมูล · ตัวเลขจะแม่นขึ้นเมื่อดึงผลครบทุกหน่วยงาน · ควรตรวจสอบกับกรมฯ ก่อนตัดสินใจ</p>
+
+{% if astats.n > 0 %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+<script>
+(function(){
+  var A = {{ astats_json|safe }};
+  var el = document.getElementById('mainChart');
+  if(!el || !window.echarts){ return; }
+  var chart = echarts.init(el);
+  var DIMS = {
+    rounds: {arr:A.rounds||[], key:'round', pre:'นัด ', axis:'นัดประมูล'},
+    types:  {arr:A.types||[],  key:'type',  pre:'',      axis:'ประเภททรัพย์'},
+    provs:  {arr:A.provs||[],   key:'prov',  pre:'',      axis:'จังหวัด'},
+    months: {arr:A.months||[],  key:'ym',    pre:'',      axis:'เดือน'}
+  };
+  var METS = {
+    pct:  {name:'% ขายได้', suffix:'%', diverge:false, hint:'สัดส่วนทรัพย์ที่ขายออกได้ (ยิ่งสูงยิ่งมีสภาพคล่อง)'},
+    med:  {name:'ส่วนลดกลาง', suffix:'%', diverge:true,  hint:'ราคาจบเทียบราคาประเมิน (ค่ากลาง) — เขียว=ถูกกว่าประเมิน, แดง=แพงกว่า'},
+    n:    {name:'จำนวนทรัพย์', suffix:'', diverge:false, hint:'จำนวนทรัพย์ที่จบประมูลในกลุ่มนี้'},
+    sold: {name:'ขายได้ (รายการ)', suffix:'', diverge:false, hint:'จำนวนทรัพย์ที่ขายออกได้จริง'}
+  };
+  var dimSel = document.getElementById('dimSel');
+  var metSel = document.getElementById('metSel');
+  var sortChk = document.getElementById('sortChk');
+  var hint = document.getElementById('chartHint');
+
+  function render(){
+    var D = DIMS[dimSel.value] || DIMS.rounds;
+    var M = METS[metSel.value] || METS.pct;
+    var rows = (D.arr||[]).slice();
+    rows = rows.filter(function(r){ return metSel.value!=='med' || r.med!==null && r.med!==undefined; });
+    if(sortChk.checked){
+      rows.sort(function(a,b){ return (b[metSel.value]||0) - (a[metSel.value]||0); });
+    }
+    var cats = rows.map(function(r){ return D.pre + (r[D.key]!==undefined ? r[D.key] : ''); });
+    var vals = rows.map(function(r){
+      var v = r[metSel.value];
+      return (v===null||v===undefined) ? null : v;
+    });
+    var data = vals.map(function(v){
+      var color = '#1C86C9';
+      if(M.diverge){ color = (v<0)?'#10b981':((v>0)?'#e11d48':'#94a3b8'); }
+      return {value:v, itemStyle:{color:color, borderRadius:[4,4,0,0]}};
+    });
+    hint.textContent = M.hint;
+    chart.setOption({
+      grid:{left:8,right:16,top:24,bottom:24,containLabel:true},
+      tooltip:{trigger:'axis', axisPointer:{type:'shadow'},
+        formatter:function(p){
+          var it=p[0]; if(!it) return '';
+          var v=it.value; var txt=(v===null||v===undefined)?'—':((M.diverge&&v>0?'+':'')+v+M.suffix);
+          return it.axisValue+'<br/><b>'+M.name+': '+txt+'</b>';
+        }},
+      xAxis:{type:'category', data:cats, name:D.axis, nameLocation:'end', nameGap:8,
+        nameTextStyle:{color:'#94a3b8',fontSize:11},
+        axisLabel:{color:'#64748b', interval:0, rotate: cats.length>7?30:0, fontSize:11},
+        axisLine:{lineStyle:{color:'#e2e8f0'}}, axisTick:{show:false}},
+      yAxis:{type:'value',
+        axisLabel:{color:'#94a3b8', formatter:function(v){ return v+M.suffix; }},
+        splitLine:{lineStyle:{color:'#f1f5f9'}}},
+      series:[{type:'bar', data:data, barMaxWidth:46,
+        label:{show:true, position:'top', color:'#475569', fontSize:10,
+          formatter:function(o){ var v=o.value; return (v===null||v===undefined)?'':((M.diverge&&v>0?'+':'')+v+M.suffix); }}
+      }]
+    }, true);
+  }
+  dimSel.addEventListener('change', render);
+  metSel.addEventListener('change', render);
+  sortChk.addEventListener('change', render);
+  window.addEventListener('resize', function(){ chart.resize(); });
+  render();
+})();
+</script>
+{% endif %}
 {% endblock %}
 """,
 "auction_results.html": """
@@ -6497,6 +6602,7 @@ def auction_stats_page(request: Request, days: int = Query(0)):
         "maxn": 1, "maxn_t": 1, "maxn_p": 1, "dmax": 1, "days": days}
     return env.get_template("auction_stats.html").render(
         title="แดชบอร์ดกลยุทธ์ประมูล — ทรัพย์ขายทอดตลาด", astats=astats, days=days,
+        astats_json=json.dumps(astats, ensure_ascii=False),
         ranges=AUC_RANGES, canonical=_abs_url(request, "/auction-stats"),
         og_desc="แดชบอร์ดวิเคราะห์ผลการขายทอดตลาด — รอบนัดไหนคุ้ม ประเภท/จังหวัดไหนส่วนลดดี",
         **ubase(request))
