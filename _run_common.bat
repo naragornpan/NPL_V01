@@ -51,6 +51,9 @@ REM 2) full address + coordinates + grades
 REM    details is capped per run because it hits the site once per property
 python src\enrich.py all --detail-limit %DETAILS% >> "%LOGFILE%" 2>&1
 
+REM 3) LED auction RESULTS (final prices) - Thai IP only, non-fatal
+python src\led_results.py >> "%LOGFILE%" 2>&1
+
 echo Finished %DATE% %TIME% (exit %RC%) >> "%LOGFILE%"
 
 forfiles /p "logs" /m *.log /d -30 /c "cmd /c del @path" >nul 2>&1

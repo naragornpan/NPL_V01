@@ -209,11 +209,19 @@ def main() -> int:
     opener = urllib.request.build_opener(
         urllib.request.HTTPSHandler(context=_CTX))
     opener.addheaders = [("User-Agent", "Mozilla/5.0 Chrome/126"), ("Accept-Language", "th")]
-    try:
-        opener.open(REPORT_URL, timeout=40).read()             # อุ่น session/cookie
-    except Exception as exc:                                    # noqa: BLE001
-        log.error("เปิดหน้า report.asp ไม่ได้ (เครือข่ายเข้าถึง LED ไหม?): %s", str(exc)[:120])
-        return 1
+    ok = False
+    for _try in range(3):
+        try:
+            opener.open(REPORT_URL, timeout=60).read()         # อุ่น session/cookie
+            ok = True
+            break
+        except Exception as exc:                                # noqa: BLE001
+            log.warning("เปิด report.asp ครั้งที่ %s ไม่สำเร็จ: %s", _try + 1, str(exc)[:100])
+            time.sleep(3)
+    if not ok:
+        log.error("เปิด report.asp ไม่ได้หลังลอง 3 ครั้ง — เครือข่ายนี้เข้า LED ไม่ได้ "
+                  "(GitHub Actions/US มักโดนบล็อก ให้รันบนเครื่อง IP ไทย) — ข้ามรอบนี้")
+        return 0   # ไม่ทำให้ job แดง
 
     today = dt.date.today()
     with connect() as conn:
