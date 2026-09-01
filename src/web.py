@@ -459,7 +459,8 @@ def led_extra(ref: str) -> dict:
             if bd and bd.isdigit() and len(bd) == 8:
                 try:
                     dd = _dt.date(int(bd[:4]) - 543, int(bd[4:6]), int(bd[6:8]))
-                    sched.append({"round": i, "label": _thai_date(dd), "past": dd < today})
+                    sched.append({"round": i, "label": _thai_date(dd),
+                                  "iso": dd.isoformat(), "past": dd < today})
                 except ValueError:
                     pass
         d["schedule"] = sched
@@ -2249,17 +2250,19 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <h2 class="font-semibold text-sm mb-2">📅 นัดประมูล <span class="text-xs font-normal text-slate-400">(ราคานัดหลังมักลดลงถ้ายังไม่มีผู้สู้ราคา)</span></h2>
     <div class="flex flex-wrap gap-2">
       {% for s in r.led_schedule %}
-      <span class="text-xs px-2.5 py-1 rounded-lg border {% if s.past %}bg-slate-100 text-slate-400{% else %}text-slate-700 bg-white{% endif %}">
-        นัด {{ s.round }} · {{ s.label }}{% if s.past %} · ผ่านแล้ว{% endif %}</span>
+      {% set is_soldround = auc_result and auc_result.is_sold and auc_result.round==s.round %}
+      <span class="text-xs px-2.5 py-1 rounded-lg border {% if is_soldround %}border-emerald-400 bg-emerald-50 text-emerald-700 font-semibold{% elif s.past %}bg-slate-100 text-slate-400{% else %}text-slate-700 bg-white{% endif %}">
+        นัด {{ s.round }} · {{ s.label }}{% if is_soldround %} · ✓ ขายรอบนี้{% elif s.past %} · ผ่านแล้ว{% endif %}</span>
       {% endfor %}
     </div>
+    {% if auc_result and auc_result.is_sold and auc_result.round %}<div class="text-xs text-emerald-700 mt-2">✓ ทรัพย์นี้ขายได้ที่ <b>นัด {{ auc_result.round }}</b> ({{ auc_result.date_label }})</div>{% endif %}
     {% if r.led_sale_location and r.led_sale_location != '-' %}<div class="text-xs text-slate-500 mt-3">📍 สถานที่ขาย: {{ r.led_sale_location }}</div>{% endif %}
   </div>
   {% endif %}
 
   {% if auc_result %}
   <div class="sheet p-4" style="border-left:4px solid {{ '#10b981' if auc_result.is_sold else '#94a3b8' }}">
-    <div class="text-xs text-slate-500">🔨 ผลการประมูล · นัดขาย {{ auc_result.date_label }}</div>
+    <div class="text-xs text-slate-500">🔨 ผลการประมูล · {% if auc_result.round %}<b class="text-slate-700">นัด {{ auc_result.round }}</b> · {% endif %}{{ auc_result.date_label }}</div>
     {% if auc_result.is_sold %}
     <div class="text-xl font-bold mt-0.5" style="color:var(--survey-deep)">✓ ขายได้ {{ "{:,.0f}".format(auc_result.sold_price or 0) }} บาท</div>
     {% if auc_result.suspect %}
@@ -4656,8 +4659,8 @@ window.doRenovate=function(lid){
 
 {% if show=='matched' and total_all > count %}
 <div class="text-xs text-slate-500 bg-slate-50 border rounded-lg px-3 py-2 mb-3 flex items-center gap-2 flex-wrap" style="border-color:var(--rule)">
-  <span>📊 แสดง <b>{{ "{:,}".format(count) }}</b> ทรัพย์ที่มีข้อมูลในระบบ (มีรายละเอียด/รูป/กดดูได้) จากผลจบประมูลจริง <b>{{ "{:,}".format(total_all) }}</b> คดี — กรมฯ ประกาศมากกว่าที่เราเก็บ</span>
-  <a href="/auction-results?show=all{{ fq }}" class="brandlink whitespace-nowrap">ดูผลดิบทุกคดี →</a>
+  <span>📊 กรองแล้ว — แสดง <b>{{ "{:,}".format(count) }}</b> จาก <b>{{ "{:,}".format(total_all) }}</b> ทรัพย์ที่มีข้อมูล</span>
+  <a href="/auction-results?show=all{{ fq }}" class="brandlink whitespace-nowrap">ดูผลดิบทุกคดี (รวมที่ยังจับคู่ไม่ได้) →</a>
 </div>
 {% elif show=='all' %}
 <div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-2 flex-wrap">
@@ -5229,6 +5232,12 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             if _ar:
                 auc_result = dict(_ar)
                 auc_result["date_label"] = _thai_date(auc_result.get("sale_date"))
+                _sd = auc_result.get("sale_date")
+                _sd_iso = _sd.isoformat() if _sd else None
+                for _s in r.get("led_schedule") or []:      # หา "นัดที่ขาย" จากตารางนัด
+                    if _s.get("iso") == _sd_iso:
+                        auc_result["round"] = _s["round"]
+                        break
                 if auc_result.get("is_sold") and auc_result.get("appraised_price") \
                         and auc_result.get("sold_price"):
                     _ratio = float(auc_result["sold_price"]) / float(auc_result["appraised_price"])
@@ -6709,77 +6718,121 @@ def auction_results(request: Request, result: str = Query(""),
     if not DEMO_MODE:
         try:
             from core.db import connect
-            # นัดครั้งที่ = biddateN (พ.ศ. YYYYMMDD) ของทรัพย์ที่จับคู่ ตรงกับวันขาย
-            _bexp = "to_char(l.sale_date + interval '543 years','YYYYMMDD')"
-            rnd_expr = ("(case "
-                        + " ".join(f"when {_bexp}=ls.raw_fields->'_open_post'->>'biddate{i}' then {i}"
-                                   for i in range(1, 9))
-                        + " end)")
-            # canonical outcome ต่อทรัพย์ (โหมด matched): ยุบ echo -> การขายจริง = "วันแรกที่ขายได้"
-            # (report.asp คืนผล "ขายได้" ซ้ำทุกวันนัด ~96% ราคา/seq เดิม) · ไม่ขาย = นัดล่าสุด
-            _canon = ("(select distinct on (matched_ref) matched_ref, sale_date, result, is_sold, "
-                      "sold_price, appraised_price, property_type_th, court, case_no, plaintiff, deed "
-                      "from led_auction_results where matched_ref is not null "
-                      "order by matched_ref, is_sold desc, "
-                      "(case when is_sold then sale_date end) asc, sale_date desc) l")
-            raw_base = "from led_auction_results l"        # all mode: ผลดิบทุกแถว (รวม unmatched)
-            base = raw_base if show == "all" else f"from {_canon}"
-            join = ("left join v_listings_with_grade g "
-                    "on g.source_code='led_auction' and g.external_ref = l.matched_ref")
-            # snapshot ล่าสุดต่อทรัพย์ (สำหรับคำนวณนัด) — กัน fan-out
-            jr = ("left join (select distinct on (external_ref) external_ref, raw_fields "
-                  "from listing_snapshots where source_code='led_auction' "
-                  "order by external_ref, observed_at desc) ls on ls.external_ref = l.matched_ref")
-            conds = ["1=1"]
-            params: list = []
-            if result == "sold":
-                conds.append("l.is_sold")
-            elif result == "nobid":
-                conds.append("not l.is_sold")
-            if province:
-                conds.append("g.province = %s"); params.append(province)
-            if date:
-                conds.append("l.sale_date = %s::date"); params.append(date)
-            if sel_round:
-                conds.append(f"{rnd_expr} = %s"); params.append(sel_round)
-            where = " and ".join(conds)                   # canon=matched อยู่แล้ว, raw=รวม unmatched
+            from collections import Counter
+            from itertools import groupby
             ps = 60
             off = (page - 1) * ps
-            # count เร็ว: join v_listings_with_grade เฉพาะเมื่อกรองจังหวัด, join snapshot เฉพาะเมื่อกรองนัด
-            cjoin = (join if province else "") + ((" " + jr) if sel_round else "")
+            # canonical outcome ต่อทรัพย์: ยุบ echo -> การขายจริง = "วันแรกที่ขายได้" (report คืนผลซ้ำทุกนัด)
+            _canon_cte = (
+                "with canon as (select distinct on (matched_ref) matched_ref, sale_date, result, "
+                "is_sold, sold_price, appraised_price, property_type_th, court, case_no, plaintiff, "
+                "deed from led_auction_results where matched_ref is not null "
+                "order by matched_ref, is_sold desc, (case when is_sold then sale_date end) asc, "
+                "sale_date desc)")
+            _snap = ("(select distinct on (external_ref) external_ref, raw_fields from listing_snapshots "
+                     "where source_code='led_auction' order by external_ref, observed_at desc)")
+
+            def _round_expr(alias):     # นัดครั้งที่: biddateN (พ.ศ.) ตรงกับวันขาย
+                bexp = f"to_char({alias}.sale_date + interval '543 years','YYYYMMDD')"
+                return ("(case " + " ".join(
+                    f"when {bexp}=ls.raw_fields->'_open_post'->>'biddate{i}' then {i}"
+                    for i in range(1, 9)) + " end)")
+
             with connect() as conn:
-                total = conn.execute(
-                    f"select count(*) n {base} {cjoin} where {where}",
-                    tuple(params)).fetchone()["n"]
-                total_all = conn.execute(                 # ผลดิบทั้งหมด (รวม echo/unmatched) ตามตัวกรองอื่น
-                    f"select count(*) n {raw_base} {cjoin} where {where}",
-                    tuple(params)).fetchone()["n"]
-                rows = [dict(r) for r in conn.execute(f"""
-                    select l.matched_ref as ref, l.sale_date, l.result, l.is_sold, l.sold_price,
-                           l.appraised_price, l.property_type_th, l.court, l.case_no,
-                           l.plaintiff, l.deed, {rnd_expr} as round,
-                           g.province, g.district, g.subdistrict, g.property_type, g.grade
-                      {base} {join} {jr}
-                     where {where}
-                     order by l.sale_date desc, (l.matched_ref is null),
-                              l.is_sold desc, l.sold_price desc nulls last
-                     limit {ps} offset {off}""", tuple(params)).fetchall()]
-                st = conn.execute(                        # สรุปหัวหน้า: นับ 1 ครั้ง/ทรัพย์ (canon)
-                    f"select count(*) n, count(*) filter (where is_sold) sold, "
-                    f"coalesce(sum(sold_price) filter (where is_sold),0) sum_sold from {_canon}"
-                ).fetchone()
-                stats = dict(st)
-                provinces = [r["province"] for r in conn.execute(
-                    f"select distinct g.province {base} {join} "
-                    f"where g.province is not null order by 1").fetchall()]
-                date_opts = [{"iso": r["sale_date"].isoformat(),
-                              "label": _thai_date(r["sale_date"]), "n": r["n"]}
-                             for r in conn.execute(
-                    f"select sale_date, count(*) n {base} group by sale_date "
-                    "order by sale_date desc").fetchall()]
-                round_opts = [{"round": r["rnd"], "n": r["n"]} for r in conn.execute(
-                    f"select {rnd_expr} rnd, count(*) n {base} {jr} "
-                    f"group by 1 having {rnd_expr} is not null order by 1").fetchall()]
+                if show != "all":
+                    # ── matched (ดีฟอลต์): ยิงครั้งเดียว canon+grade+นัด แล้วรวมผลใน python (~1s) ──
+                    mrows = [dict(r) for r in conn.execute(f"""
+                        {_canon_cte}
+                        select c.matched_ref ref, c.sale_date, c.result, c.is_sold, c.sold_price,
+                               c.appraised_price, c.property_type_th, c.court, c.case_no, c.plaintiff,
+                               c.deed, {_round_expr('c')} round,
+                               g.province, g.district, g.subdistrict, g.property_type, g.grade
+                          from canon c
+                          left join v_listings_with_grade g
+                            on g.source_code='led_auction' and g.external_ref = c.matched_ref
+                          left join {_snap} ls on ls.external_ref = c.matched_ref
+                    """).fetchall()]
+                    dcnt = Counter(r["sale_date"] for r in mrows)
+                    date_opts = [{"iso": d.isoformat(), "label": _thai_date(d), "n": n}
+                                 for d, n in sorted(dcnt.items(), reverse=True)]
+                    rcnt = Counter(r["round"] for r in mrows if r["round"])
+                    round_opts = [{"round": k, "n": rcnt[k]} for k in sorted(rcnt)]
+                    provinces = sorted({r["province"] for r in mrows if r["province"]})
+                    _sold = [r for r in mrows if r["is_sold"]]
+                    stats = {"n": len(mrows), "sold": len(_sold),
+                             "sum_sold": round(sum(float(r["sold_price"] or 0) for r in _sold))}
+                    total_all = len(mrows)                # ทรัพย์ที่มีข้อมูลทั้งหมด (ก่อนกรอง)
+
+                    def _keep(r):
+                        if result == "sold" and not r["is_sold"]:
+                            return False
+                        if result == "nobid" and r["is_sold"]:
+                            return False
+                        if province and r["province"] != province:
+                            return False
+                        if date and r["sale_date"].isoformat() != date:
+                            return False
+                        if sel_round and r["round"] != sel_round:
+                            return False
+                        return True
+
+                    filt = [r for r in mrows if _keep(r)]
+                    filt.sort(key=lambda r: (r["sale_date"], r["is_sold"],
+                                             float(r["sold_price"] or 0)), reverse=True)
+                    total = len(filt)
+                    rows = filt[off:off + ps]
+                else:
+                    # ── all: ผลดิบทุกแถว (รวม echo/unmatched) แบ่งหน้าใน SQL ──
+                    rnd_expr = _round_expr("l")
+                    join = ("left join v_listings_with_grade g "
+                            "on g.source_code='led_auction' and g.external_ref = l.matched_ref")
+                    jr = f"left join {_snap} ls on ls.external_ref = l.matched_ref"
+                    conds = ["1=1"]
+                    params: list = []
+                    if result == "sold":
+                        conds.append("l.is_sold")
+                    elif result == "nobid":
+                        conds.append("not l.is_sold")
+                    if province:
+                        conds.append("g.province = %s"); params.append(province)
+                    if date:
+                        conds.append("l.sale_date = %s::date"); params.append(date)
+                    if sel_round:
+                        conds.append(f"{rnd_expr} = %s"); params.append(sel_round)
+                    where = " and ".join(conds)
+                    cjoin = (join if province else "") + ((" " + jr) if sel_round else "")
+                    total = conn.execute(
+                        f"select count(*) n from led_auction_results l {cjoin} where {where}",
+                        tuple(params)).fetchone()["n"]
+                    total_all = total
+                    rows = [dict(r) for r in conn.execute(f"""
+                        select l.matched_ref as ref, l.sale_date, l.result, l.is_sold, l.sold_price,
+                               l.appraised_price, l.property_type_th, l.court, l.case_no,
+                               l.plaintiff, l.deed, {rnd_expr} as round,
+                               g.province, g.district, g.subdistrict, g.property_type, g.grade
+                          from led_auction_results l {join} {jr}
+                         where {where}
+                         order by l.sale_date desc, (l.matched_ref is null),
+                                  l.is_sold desc, l.sold_price desc nulls last
+                         limit {ps} offset {off}""", tuple(params)).fetchall()]
+                    st = conn.execute(
+                        f"{_canon_cte} select count(*) n, count(*) filter (where is_sold) sold, "
+                        "coalesce(sum(sold_price) filter (where is_sold),0) sum_sold from canon"
+                    ).fetchone()
+                    stats = dict(st)
+                    provinces = [r["province"] for r in conn.execute(
+                        "select distinct g.province from led_auction_results l left join "
+                        "v_listings_with_grade g on g.source_code='led_auction' "
+                        "and g.external_ref=l.matched_ref where g.province is not null order by 1"
+                    ).fetchall()]
+                    date_opts = [{"iso": r["sale_date"].isoformat(),
+                                  "label": _thai_date(r["sale_date"]), "n": r["n"]}
+                                 for r in conn.execute(
+                        "select sale_date, count(*) n from led_auction_results "
+                        "group by sale_date order by sale_date desc").fetchall()]
+                    round_opts = [{"round": r["rnd"], "n": r["n"]} for r in conn.execute(
+                        f"select {rnd_expr} rnd, count(*) n from led_auction_results l {jr} "
+                        f"group by 1 having {rnd_expr} is not null order by 1").fetchall()]
             # เตรียมข้อมูลแสดง: %ต่างจากประเมิน + จัดกลุ่มตามวันขาย
             for r in rows:
                 ap, sp = r.get("appraised_price"), r.get("sold_price")
@@ -6791,7 +6844,6 @@ def auction_results(request: Request, result: str = Query(""),
                         r["suspect"] = True             # ต่ำผิดปกติ — ไม่โชว์ %
                     else:
                         r["pct"] = round((_ratio - 1) * 100)
-            from itertools import groupby
             for d, grp in groupby(rows, key=lambda x: x["sale_date"]):
                 groups.append({"label": _thai_date(d), "rows": list(grp)})
         except Exception as exc:                                    # noqa: BLE001
