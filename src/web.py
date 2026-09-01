@@ -457,6 +457,11 @@ def led_extra(ref: str) -> dict:
             row = conn.execute(
                 """select office_name, raw_fields->>'court_name' as court_name,
                           raw_fields->>'auction_venue' as auction_venue,
+                          coalesce(raw_fields->>'deed_no',
+                                   raw_fields->'_open_post'->>'deedno') as deed_no,
+                          raw_fields->'_open_post'->>'deedampur' as deed_ampur,
+                          raw_fields->'_open_post'->>'deedcity' as deed_city,
+                          raw_fields->'_open_post'->>'landtype' as land_type,
                           raw_fields->'_open_post'->>'province_id' as led_pid,
                           raw_fields->'_open_post'->>'province_name' as led_pname,
                           raw_fields->'_open_post'->>'search_bid_date' as led_bdate,
@@ -2299,7 +2304,7 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     {% endif %}
     {% if auc_result.case_no %}
     <div class="text-xs text-slate-500 mt-2 pt-2 border-t" style="border-color:var(--rule)">
-      คดีหมายเลขแดง <b>{{ auc_result.case_no }}</b>{% if auc_result.court %} · ศาล{{ auc_result.court }}{% endif %}{% if auc_result.deed and auc_result.deed != '-' %} · โฉนด {{ auc_result.deed }}{% endif %}
+      คดีหมายเลขแดง <b>{{ auc_result.case_no }}</b>{% if auc_result.court %} · ศาล{{ auc_result.court }}{% endif %}{% if auc_result.deed and auc_result.deed != '-' %} · โฉนด {{ auc_result.deed }}{% elif r.led_deed %} · โฉนด {{ r.led_deed }}{% endif %}
       {% if auc_result.plaintiff %}<div class="text-slate-400">โจทก์: {{ auc_result.plaintiff }}</div>{% endif %}
       <div class="text-[11px] text-slate-400 mt-1">ใช้เลขคดีแดงนี้ค้นสำนวน/ผลที่ <a href="https://asset.led.go.th/report/reports.asp" target="_blank" rel="noopener" class="brandlink">กรมบังคับคดี</a> ได้</div>
     </div>
@@ -5228,6 +5233,13 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         r["led_occupant"] = ex.get("occupant")
         r["led_sale_location"] = ex.get("sale_location")
         r["led_schedule"] = ex.get("schedule") or []
+        # เลขโฉนด/เอกสารสิทธิ์ (จากประกาศทรัพย์ — แม่นกว่าคอลัมน์โฉนดในรายงานผลที่มักเป็น '-')
+        _deed = (ex.get("deed_no") or "").strip()
+        if _deed and _deed not in ("-", "0"):
+            r["led_deed"] = _deed
+            r["led_deed_loc"] = " ".join(
+                x.strip() for x in [ex.get("deed_ampur"), ex.get("deed_city")]
+                if x and x.strip() not in ("", "-", "0")) or None
         # ราคาเริ่มต้นตามเกณฑ์แต่ละนัด (นัด1=100% .. นัด4+=70% ของราคาประเมิน)
         _appr = r.get("appraised_price") or r.get("opening_price")
         for _s in r["led_schedule"]:
@@ -5297,6 +5309,9 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         ("สถานีใกล้สุด", _stn_txt),
         ("นัดขายครั้งที่", r.get("auction_round")),
         ("วันขายทอดตลาด", r.get("auction_date")),
+        ("เลขโฉนด/เอกสารสิทธิ์",
+         (r["led_deed"] + (f" · {r['led_deed_loc']}" if r.get("led_deed_loc") else ""))
+         if r.get("led_deed") else None),
         ("หน่วยงานที่ขาย", r.get("office_name")),
         ("สถานที่ขายทอดตลาด", r.get("auction_venue")),
         ("การจำนอง", "ติดไปกับทรัพย์" if r.get("mortgage_carried") else "ไม่ติดไป"),
