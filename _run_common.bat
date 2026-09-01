@@ -5,6 +5,7 @@ REM  Use run_daily.bat / run_weekly.bat / run_monthly.bat
 REM
 REM  %1 = tier (1/2/3)   %2 = pages per province   %3 = log label
 REM  %4 = detail limit (properties to fetch full address for)
+REM  %5 = LED all-offices days_ahead (blank = skip this step)
 REM
 REM  NOTE: this file must stay ASCII-only.
 REM  Windows reads .bat with the OS code page before chcp runs,
@@ -17,6 +18,7 @@ set "TIER=%~1"
 set "PAGES=%~2"
 set "LABEL=%~3"
 set "DETAILS=%~4"
+set "LEDDAYS=%~5"
 if "%TIER%"=="" set "TIER=1"
 if "%PAGES%"=="" set "PAGES=30"
 if "%LABEL%"=="" set "LABEL=run"
@@ -43,9 +45,16 @@ if not exist ".venv\Scripts\activate.bat" (
 )
 call ".venv\Scripts\activate.bat"
 
-REM 1) fetch listings
+REM 1) fetch listings (tier-limited adapters)
 python src\run_all.py --tier %TIER% --max-pages %PAGES% >> "%LOGFILE%" 2>&1
 set "RC=%ERRORLEVEL%"
+
+REM 1b) LED listings ALL offices nationwide (only if %5 set)
+REM     run before results so new listings can be matched in the same run
+if not "%LEDDAYS%"=="" (
+  echo ---- LED all-offices days_ahead=%LEDDAYS% ---- >> "%LOGFILE%"
+  python src\run.py led_auction --all-offices --days-ahead %LEDDAYS% --days-back 0 >> "%LOGFILE%" 2>&1
+)
 
 REM 2) full address + coordinates + grades
 REM    details is capped per run because it hits the site once per property
