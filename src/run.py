@@ -64,6 +64,9 @@ def main() -> int:
     ap.add_argument("--all-offices", action="store_true",
                     help="LED: ดึงทุกสำนักงานทั่วประเทศ (ไม่กรอง tier) — ปริมาณมาก "
                          "เหมาะกับ backfill/กวาดเต็ม ควบคู่กับ --days-ahead ที่พอเหมาะ")
+    ap.add_argument("--all-provinces", action="store_true",
+                    help="ดึงครบทุกจังหวัด (77) แทน tier — สำหรับ bam/ghb/sam/ktb "
+                         "และยกเพดานหน้าให้ gsb/กรุงศรี (stale หยุดเองเมื่อหมดของ)")
     ap.add_argument("--max-pages", type=int, default=20)
     ap.add_argument("--full", action="store_true",
                     help="ไล่ครบทุกหน้า ไม่หยุดแม้ไม่เจอของใหม่ (ใช้ตอนกวาดเต็มรอบ)")
@@ -75,11 +78,21 @@ def main() -> int:
     args = ap.parse_args()
 
     provinces = [p.strip() for p in args.provinces.split(",") if p.strip()]
+    if args.all_provinces and not provinces:
+        # ครบ 77 จังหวัดจากศูนย์กลางจังหวัด (ใช้โดย bam/ghb/sam/ktb ที่ค้นรายจังหวัด)
+        try:
+            from core.geocode import PROVINCE_CENTROIDS as _PC
+            provinces = sorted(_PC.keys())
+        except Exception:                                     # noqa: BLE001
+            provinces = provinces_for_tier(3)
     if not provinces:
         provinces = provinces_for_tier(args.tier)
     # office_filter ว่าง ([]) = adapter LED ดึง "ทุกสำนักงาน" (follow_up ไม่กรอง)
     office_filter = [] if args.all_offices else office_filter_for_tier(args.tier)
-    config = {"provinces": provinces, "max_pages": args.max_pages,
+    # gsb/กรุงศรี ไม่ใช้ provinces (ลิสต์รวมทั้งประเทศ) — ยกเพดานหน้าให้ไล่ครบ
+    # stale-streak หยุดเองเมื่อเจอหน้าว่าง จึงตั้งเพดานสูงได้ปลอดภัย
+    max_pages = max(args.max_pages, 400) if args.all_provinces else args.max_pages
+    config = {"provinces": provinces, "max_pages": max_pages,
               "office_filter": office_filter}
     # ส่งช่วงวันให้ LED (adapter อื่นไม่สนใจคีย์นี้)
     if args.days_ahead is not None:
@@ -87,15 +100,19 @@ def main() -> int:
     if args.days_back is not None:
         config["days_back"] = args.days_back
 
+    _wide = args.all_offices or args.all_provinces
     if args.all_offices:
         log.info("โหมด --all-offices | ดึงทุกสำนักงานทั่วประเทศ (ปริมาณมาก) "
                  "| days_ahead=%s days_back=%s", config.get("days_ahead", 45),
                  config.get("days_back", 3))
+    if args.all_provinces:
+        log.info("โหมด --all-provinces | %s จังหวัด | max_pages=%s (ปริมาณมาก)",
+                 len(provinces), max_pages)
     est = estimated_runtime_minutes(args.tier, args.max_pages, 3.0)
-    if not args.all_offices:
+    if not _wide:
         log.info("tier %s | %s จังหวัด | ประเมินเวลารัน ~%.0f นาที",
                  args.tier, len(provinces), est)
-    if est > 25 and not args.all_offices:
+    if est > 25 and not _wide:
         log.warning("เกิน timeout ของ GitHub Actions (30 นาที) — "
                     "ลด --max-pages หรือแตก workflow เป็นหลาย job")
 

@@ -45,8 +45,9 @@ if not exist ".venv\Scripts\activate.bat" (
 )
 call ".venv\Scripts\activate.bat"
 
-REM 1) fetch listings (tier-limited adapters)
-python src\run_all.py --tier %TIER% --max-pages %PAGES% >> "%LOGFILE%" 2>&1
+REM 1) fetch listings - ALL provinces nationwide, every source
+REM    (bam/ghb/sam/ktb search all 77 provinces; gsb/krungsri page cap raised)
+python src\run_all.py --all-provinces --tier %TIER% --max-pages %PAGES% >> "%LOGFILE%" 2>&1
 set "RC=%ERRORLEVEL%"
 
 REM 1b) LED listings ALL offices nationwide (only if %5 set)

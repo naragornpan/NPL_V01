@@ -69,7 +69,7 @@ def active_sources(conn) -> tuple[list[str], list[str]]:
 
 
 def run_one(source: str, dry_run: bool, tier: int | None = None,
-            max_pages: int | None = None) -> tuple[str, int]:
+            max_pages: int | None = None, all_provinces: bool = False) -> tuple[str, int]:
     """รัน adapter หนึ่งตัวเป็น subprocess เพื่อไม่ให้มันพาตัวอื่นล้มไปด้วย"""
     cmd = [sys.executable, str(pathlib.Path(__file__).with_name("run.py")), source]
     if dry_run:
@@ -78,6 +78,8 @@ def run_one(source: str, dry_run: bool, tier: int | None = None,
         cmd += ["--tier", str(tier)]
     if max_pages:
         cmd += ["--max-pages", str(max_pages)]
+    if all_provinces:
+        cmd.append("--all-provinces")
     log.info("เริ่ม %s", source)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
@@ -152,6 +154,8 @@ def main() -> int:
     ap.add_argument("--tier", type=int,
                     help="1=กทม+ปริมณฑล 2=+EEC 3=+หัวเมืองภาค")
     ap.add_argument("--max-pages", type=int, help="จำนวนหน้าต่อจังหวัด")
+    ap.add_argument("--all-provinces", action="store_true",
+                    help="ทุก source ดึงครบทุกจังหวัด (77) แทน tier + ยกเพดานหน้า gsb/กรุงศรี")
     args = ap.parse_args()
 
     with connect() as conn:
@@ -172,9 +176,10 @@ def main() -> int:
             sources, pending = active_sources(conn)
             if pending:
                 log.info("ข้ามแหล่งที่ยังไม่มี adapter: %s", ", ".join(pending))
-            tier_txt = f" tier {args.tier}" if args.tier else ""
+            tier_txt = " ทุกจังหวัด (all-provinces)" if args.all_provinces else (
+                f" tier {args.tier}" if args.tier else "")
             log.info("จะรัน %s แหล่ง%s: %s", len(sources), tier_txt, ", ".join(sources))
-            results = [run_one(s, args.dry_run, args.tier, args.max_pages)
+            results = [run_one(s, args.dry_run, args.tier, args.max_pages, args.all_provinces)
                        for s in sources]
             failed = [s for s, rc in results if rc != 0]
             if failed:
