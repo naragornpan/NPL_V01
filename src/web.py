@@ -4348,7 +4348,7 @@ window.doRenovate=function(lid){
 <div class="grid gap-4 lg:grid-cols-2">
   <div class="sheet p-4">
     <h2 class="font-semibold mb-1">⏱️ ตามนัดประมูล</h2>
-    <p class="text-xs text-slate-400 mb-2">ยิ่งนัดหลัง ราคายิ่งลด (ส่วนลดติดลบมากขึ้น) แต่ของดีมักถูกซื้อในนัดต้น</p>
+    <p class="text-xs text-slate-400 mb-2">%ขายได้ = ของที่ขายออก มักปิดตั้งแต่นัดต้น (1-3) · ที่ค้างถึงนัดหลังคือขายยาก นับ 1 ครั้ง/ทรัพย์ (ตัดผลซ้ำที่กรมฯ โชว์ทุกนัด)</p>
     {{ statrows(astats.rounds, 'round', 'นัด ') }}
   </div>
   <div class="sheet p-4">
@@ -4486,7 +4486,7 @@ window.doRenovate=function(lid){
 </section>
 
 <div class="sheet p-3 mb-3 rounded-xl text-xs text-slate-500 flex items-start gap-2">
-  <span>💡</span><span>ราคา = ราคาเริ่มต้นประมูล · "นัด X/รวม" = นัดถัดไปจากทั้งหมดตามประกาศ · ยิ่งนัดหลังมักได้ส่วนลดลึกขึ้น (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบวันนัดกับกรมบังคับคดีอีกครั้งก่อนไป</span>
+  <span>💡</span><span>ราคา = ราคาเริ่มต้นประมูล · "นัด X/รวม" = นัดถัดไปจากทั้งหมดตามประกาศ · ของส่วนใหญ่ปิดตั้งแต่นัดต้น ๆ (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบวันนัดกับกรมบังคับคดีอีกครั้งก่อนไป</span>
 </div>
 
 <form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
@@ -4589,7 +4589,7 @@ window.doRenovate=function(lid){
     <h2 class="font-semibold">📊 กลยุทธ์: รอประมูลนัดไหนคุ้ม</h2>
     <a href="/auction-stats" class="text-xs brandlink whitespace-nowrap">ดูแดชบอร์ดเต็ม (กรองช่วงวัน) →</a>
   </div>
-  <p class="text-xs text-slate-500 mb-3">จากผลจริง {{ "{:,}".format(astats.n) }} รายการที่จับคู่ได้ (ขายออก {{ astats.pct }}%) — ยิ่งนัดหลัง ราคายิ่งลด แต่ของดีมักถูกซื้อไปในนัดต้น ๆ</p>
+  <p class="text-xs text-slate-500 mb-3">จากผลจริง {{ "{:,}".format(astats.n) }} รายการที่จับคู่ได้ (ขายออก {{ astats.pct }}%) — ส่วนใหญ่ขายออกตั้งแต่นัดต้น (1-3) ที่ค้างถึงนัดหลังคือขายยาก</p>
   <div class="overflow-x-auto">
   <table class="w-full text-sm">
     <thead><tr class="text-xs text-slate-400 text-left">
@@ -5219,11 +5219,13 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         try:
             from core.db import connect
             with connect() as conn:
+                # การขายจริง = วันแรกสุดที่ "ขายได้" (echo นัดถัด ๆ ตัดทิ้ง) · ไม่ขาย = นัดล่าสุด
                 _ar = conn.execute(
                     "select sale_date, result, is_sold, sold_price, appraised_price, "
                     "case_no, court, deed, plaintiff "
                     "from led_auction_results where matched_ref = %s "
-                    "order by sale_date desc limit 1", (ref,)).fetchone()
+                    "order by is_sold desc, (case when is_sold then sale_date end) asc, "
+                    "sale_date desc limit 1", (ref,)).fetchone()
             if _ar:
                 auc_result = dict(_ar)
                 auc_result["date_label"] = _thai_date(auc_result.get("sale_date"))
@@ -6581,16 +6583,35 @@ def _auction_stats(days: int = 0) -> dict:
             cond += " and ar.sale_date >= %s"
             params.append(_dt.date.today() - _dt.timedelta(days=days))
         with connect() as conn:
+            # snapshot ล่าสุดต่อทรัพย์ (distinct-on) กัน fan-out จาก snapshot หลายรุ่น
             rows = conn.execute(f"""
-                select ar.sale_date, ar.is_sold, ar.sold_price, ar.appraised_price,
+                select ar.matched_ref ref, ar.sale_date, ar.is_sold, ar.sold_price,
+                       ar.appraised_price,
                        coalesce(ls.property_type, ls.raw_fields->>'property_type') ptype,
                        coalesce(ls.province, ls.raw_fields->>'province') prov,
                        ls.raw_fields->'_open_post' op
                   from led_auction_results ar
-                  join listing_snapshots ls on ls.source_code='led_auction'
-                       and ls.external_ref = ar.matched_ref
+                  join (select distinct on (external_ref) external_ref,
+                               property_type, province, raw_fields
+                          from listing_snapshots where source_code='led_auction'
+                         order by external_ref, observed_at desc) ls
+                       on ls.external_ref = ar.matched_ref
                  where {cond}
             """, tuple(params)).fetchall()
+
+        # ── ยุบ echo: report.asp คืนผล "ขายได้" เดิมซ้ำทุกวันนัด (พบ 96% ราคา/seq เท่ากัน) ──
+        # ต่อ 1 ทรัพย์ → เอา "การขายจริง" = วันแรกสุดที่ขายได้ (echo นัดถัด ๆ ตัดทิ้ง)
+        # ไม่ขายเลย → งดขาย ใช้นัดล่าสุด · แก้สถิติที่ echo ทำให้ %ขายได้นัดหลังพองเกินจริง
+        byref: dict = defaultdict(list)
+        for r in rows:
+            byref[r["ref"]].append(r)
+
+        def _round_of(op, sale_date):
+            for i in range(1, 9):
+                bd = op.get(f"biddate{i}")
+                if bd and _bud(bd) == sale_date:
+                    return i
+            return None
 
         R = defaultdict(lambda: {"n": 0, "sold": 0, "disc": []})
         T = defaultdict(lambda: {"n": 0, "sold": 0, "disc": []})
@@ -6600,36 +6621,42 @@ def _auction_stats(days: int = 0) -> dict:
         tn = ts = 0
         n_outlier = 0
         sum_sold = 0.0
-        for r in rows:
-            op = r["op"] or {}
-            rnd = None
-            for i in range(1, 9):
-                bd = op.get(f"biddate{i}")
-                if bd and _bud(bd) == r["sale_date"]:
-                    rnd = i
-                    break
+        for ref, rs in byref.items():
+            op = rs[0]["op"] or {}
+            sold_rows = [x for x in rs if x["is_sold"] and x["sold_price"]]
+            if sold_rows:
+                first = min(sold_rows, key=lambda x: x["sale_date"])   # การขายจริง = วันแรก
+                is_sold = True
+                sd, price = first["sale_date"], float(first["sold_price"])
+                appr = float(first["appraised_price"] or 0)
+            else:
+                last = max(rs, key=lambda x: x["sale_date"])
+                is_sold = False
+                sd, price = last["sale_date"], None
+                appr = float(last["appraised_price"] or 0)
+            rnd = _round_of(op, sd)
             disc = None
             outlier = False
-            if r["is_sold"] and r["sold_price"] and r["appraised_price"]:
-                _ratio = float(r["sold_price"]) / float(r["appraised_price"])
+            if is_sold and price and appr:
+                _ratio = price / appr
                 if _ratio < _AUC_OUTLIER_RATIO:
                     outlier = True                                  # ต่ำผิดปกติ — กันออกจากสถิติส่วนลด
                 else:
                     disc = (_ratio - 1) * 100
             tn += 1
-            if r["is_sold"]:
+            if is_sold:
                 ts += 1
                 if outlier:
                     n_outlier += 1
                 else:
-                    sum_sold += float(r["sold_price"] or 0)
+                    sum_sold += price
                 if disc is not None:
                     all_disc.append(disc)
             if rnd:
-                _add(R[rnd], r["is_sold"], disc)
-            _add(T[r["ptype"] or "other"], r["is_sold"], disc)
-            _add(P[r["prov"] or "ไม่ระบุ"], r["is_sold"], disc)
-            _add(M[r["sale_date"].strftime("%Y-%m")], r["is_sold"], disc)
+                _add(R[rnd], is_sold, disc)
+            _add(T[rs[0]["ptype"] or "other"], is_sold, disc)
+            _add(P[rs[0]["prov"] or "ไม่ระบุ"], is_sold, disc)
+            _add(M[sd.strftime("%Y-%m")], is_sold, disc)
 
         rounds = _pack(R, "round", sort=lambda x: x["_k"])
         types = _pack(T, "type", label=lambda k: TYPE_LABELS.get(k, k), sort=lambda x: -x["n"])
@@ -6688,8 +6715,15 @@ def auction_results(request: Request, result: str = Query(""),
                         + " ".join(f"when {_bexp}=ls.raw_fields->'_open_post'->>'biddate{i}' then {i}"
                                    for i in range(1, 9))
                         + " end)")
-            # ดึงผลทุกแถวตามวันจริง (ไม่ dedupe) รวมรายการที่จับคู่ทรัพย์ไม่ได้ (unmatched) ด้วย
-            base = "from led_auction_results l"
+            # canonical outcome ต่อทรัพย์ (โหมด matched): ยุบ echo -> การขายจริง = "วันแรกที่ขายได้"
+            # (report.asp คืนผล "ขายได้" ซ้ำทุกวันนัด ~96% ราคา/seq เดิม) · ไม่ขาย = นัดล่าสุด
+            _canon = ("(select distinct on (matched_ref) matched_ref, sale_date, result, is_sold, "
+                      "sold_price, appraised_price, property_type_th, court, case_no, plaintiff, deed "
+                      "from led_auction_results where matched_ref is not null "
+                      "order by matched_ref, is_sold desc, "
+                      "(case when is_sold then sale_date end) asc, sale_date desc) l")
+            raw_base = "from led_auction_results l"        # all mode: ผลดิบทุกแถว (รวม unmatched)
+            base = raw_base if show == "all" else f"from {_canon}"
             join = ("left join v_listings_with_grade g "
                     "on g.source_code='led_auction' and g.external_ref = l.matched_ref")
             # snapshot ล่าสุดต่อทรัพย์ (สำหรับคำนวณนัด) — กัน fan-out
@@ -6708,11 +6742,7 @@ def auction_results(request: Request, result: str = Query(""),
                 conds.append("l.sale_date = %s::date"); params.append(date)
             if sel_round:
                 conds.append(f"{rnd_expr} = %s"); params.append(sel_round)
-            where_other = " and ".join(conds)            # ตัวกรองอื่น (ยังไม่รวม matched)
-            matched_clause = "" if show == "all" else " and l.matched_ref is not null"
-            where = where_other + matched_clause
-            # ในโหมด matched: dropdown/นับต่อวันให้สะท้อนเฉพาะที่มีข้อมูล
-            date_flt = "" if show == "all" else " where matched_ref is not null"
+            where = " and ".join(conds)                   # canon=matched อยู่แล้ว, raw=รวม unmatched
             ps = 60
             off = (page - 1) * ps
             # count เร็ว: join v_listings_with_grade เฉพาะเมื่อกรองจังหวัด, join snapshot เฉพาะเมื่อกรองนัด
@@ -6721,8 +6751,8 @@ def auction_results(request: Request, result: str = Query(""),
                 total = conn.execute(
                     f"select count(*) n {base} {cjoin} where {where}",
                     tuple(params)).fetchone()["n"]
-                total_all = conn.execute(                 # จำนวนจริงทั้งหมด (รวม unmatched) ตามตัวกรองอื่น
-                    f"select count(*) n {base} {cjoin} where {where_other}",
+                total_all = conn.execute(                 # ผลดิบทั้งหมด (รวม echo/unmatched) ตามตัวกรองอื่น
+                    f"select count(*) n {raw_base} {cjoin} where {where}",
                     tuple(params)).fetchone()["n"]
                 rows = [dict(r) for r in conn.execute(f"""
                     select l.matched_ref as ref, l.sale_date, l.result, l.is_sold, l.sold_price,
@@ -6734,10 +6764,10 @@ def auction_results(request: Request, result: str = Query(""),
                      order by l.sale_date desc, (l.matched_ref is null),
                               l.is_sold desc, l.sold_price desc nulls last
                      limit {ps} offset {off}""", tuple(params)).fetchall()]
-                st = conn.execute(
-                    "select count(*) n, count(*) filter (where is_sold) sold, "
-                    "coalesce(sum(sold_price) filter (where is_sold),0) sum_sold "
-                    "from led_auction_results where matched_ref is not null").fetchone()
+                st = conn.execute(                        # สรุปหัวหน้า: นับ 1 ครั้ง/ทรัพย์ (canon)
+                    f"select count(*) n, count(*) filter (where is_sold) sold, "
+                    f"coalesce(sum(sold_price) filter (where is_sold),0) sum_sold from {_canon}"
+                ).fetchone()
                 stats = dict(st)
                 provinces = [r["province"] for r in conn.execute(
                     f"select distinct g.province {base} {join} "
@@ -6745,8 +6775,8 @@ def auction_results(request: Request, result: str = Query(""),
                 date_opts = [{"iso": r["sale_date"].isoformat(),
                               "label": _thai_date(r["sale_date"]), "n": r["n"]}
                              for r in conn.execute(
-                    f"select sale_date, count(*) n from led_auction_results{date_flt} "
-                    "group by sale_date order by sale_date desc").fetchall()]
+                    f"select sale_date, count(*) n {base} group by sale_date "
+                    "order by sale_date desc").fetchall()]
                 round_opts = [{"round": r["rnd"], "n": r["n"]} for r in conn.execute(
                     f"select {rnd_expr} rnd, count(*) n {base} {jr} "
                     f"group by 1 having {rnd_expr} is not null order by 1").fetchall()]
