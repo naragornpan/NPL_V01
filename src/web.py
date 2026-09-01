@@ -425,6 +425,28 @@ def province_from_texts(*texts) -> str | None:
     return None
 
 
+# เกณฑ์กรมบังคับคดี: ราคาเริ่มต้นประมูลลดต่อนัด นัด1=100% นัด2=90% นัด3=80% นัด4+=70%
+_LED_RESERVE_PCT = {1: 100, 2: 90, 3: 80}
+
+
+def led_reserve_pct(rnd) -> int:
+    """% ราคาเริ่มต้นของนัดนั้นเทียบราคาประเมิน (ตามเกณฑ์กรมบังคับคดี)"""
+    try:
+        return _LED_RESERVE_PCT.get(int(rnd), 70)
+    except (TypeError, ValueError):
+        return 100
+
+
+def led_reserve_price(appraised, rnd):
+    """ราคาเริ่มต้นประมูล (บาท) ของนัดนั้น = ราคาประเมิน × %ตามเกณฑ์ — None ถ้าไม่มีราคาประเมิน"""
+    if not appraised:
+        return None
+    try:
+        return round(float(appraised) * led_reserve_pct(rnd) / 100)
+    except (TypeError, ValueError):
+        return None
+
+
 def led_extra(ref: str) -> dict:
     """ดึง สำนักงานบังคับคดี + ศาล ของทรัพย์ LED (office_name เป็นคอลัมน์, court_name อยู่ raw_fields)"""
     if DEMO_MODE:
@@ -2247,12 +2269,13 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
 
   {% if r.led_schedule %}
   <div class="sheet p-4">
-    <h2 class="font-semibold text-sm mb-2">📅 นัดประมูล <span class="text-xs font-normal text-slate-400">(ราคานัดหลังมักลดลงถ้ายังไม่มีผู้สู้ราคา)</span></h2>
+    <h2 class="font-semibold text-sm mb-2">📅 นัดประมูล <span class="text-xs font-normal text-slate-400">(ราคาเริ่มต้นตามเกณฑ์กรมฯ: นัด1=100% นัด2=90% นัด3=80% นัด4+=70% ของประเมิน)</span></h2>
     <div class="flex flex-wrap gap-2">
       {% for s in r.led_schedule %}
       {% set is_soldround = auc_result and auc_result.is_sold and auc_result.round==s.round %}
-      <span class="text-xs px-2.5 py-1 rounded-lg border {% if is_soldround %}border-emerald-400 bg-emerald-50 text-emerald-700 font-semibold{% elif s.past %}bg-slate-100 text-slate-400{% else %}text-slate-700 bg-white{% endif %}">
-        นัด {{ s.round }} · {{ s.label }}{% if is_soldround %} · ✓ ขายรอบนี้{% elif s.past %} · ผ่านแล้ว{% endif %}</span>
+      <span class="text-xs px-2.5 py-1.5 rounded-lg border flex flex-col leading-tight {% if is_soldround %}border-emerald-400 bg-emerald-50 text-emerald-700 font-semibold{% elif s.past %}bg-slate-100 text-slate-400{% else %}text-slate-700 bg-white{% endif %}">
+        <span>นัด {{ s.round }} · {{ s.label }}{% if is_soldround %} · ✓ ขายรอบนี้{% elif s.past %} · ผ่านแล้ว{% endif %}</span>
+        {% if s.start_price %}<span class="text-[10px] {% if is_soldround %}text-emerald-600{% else %}text-slate-400{% endif %}">เริ่ม {{ "{:,}".format(s.start_price) }} ({{ s.pct }}%)</span>{% endif %}</span>
       {% endfor %}
     </div>
     {% if auc_result and auc_result.is_sold and auc_result.round %}<div class="text-xs text-emerald-700 mt-2">✓ ทรัพย์นี้ขายได้ที่ <b>นัด {{ auc_result.round }}</b> ({{ auc_result.date_label }})</div>{% endif %}
@@ -4489,7 +4512,7 @@ window.doRenovate=function(lid){
 </section>
 
 <div class="sheet p-3 mb-3 rounded-xl text-xs text-slate-500 flex items-start gap-2">
-  <span>💡</span><span>ราคา = ราคาเริ่มต้นประมูล · "นัด X/รวม" = นัดถัดไปจากทั้งหมดตามประกาศ · ของส่วนใหญ่ปิดตั้งแต่นัดต้น ๆ (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบวันนัดกับกรมบังคับคดีอีกครั้งก่อนไป</span>
+  <span>💡</span><span>ราคา = ราคาเริ่มต้นของนัดถัดไป (เกณฑ์กรมฯ: นัด1=100% นัด2=90% นัด3=80% นัด4+=70% ของประเมิน) · ของส่วนใหญ่ปิดตั้งแต่นัดต้น ๆ (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบกับกรมบังคับคดีอีกครั้งก่อนไป</span>
 </div>
 
 <form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
@@ -4544,8 +4567,8 @@ window.doRenovate=function(lid){
     </div>
     <div class="mt-2.5 flex items-end justify-between gap-2">
       <div>
-        <div class="text-[11px] text-slate-400">ราคาเริ่มต้น</div>
-        <div class="text-lg font-bold leading-tight" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.opening_price or 0) }}</div>
+        <div class="text-[11px] text-slate-400">ราคาเริ่มต้น นัด {{ r.next_round }}{% if r.start_pct and r.start_pct < 100 %} <span class="text-emerald-600">({{ r.start_pct }}%)</span>{% endif %}</div>
+        <div class="text-lg font-bold leading-tight" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.start_price or r.opening_price or 0) }}</div>
         {% if r.appraised_price %}<div class="text-[11px] text-slate-400">ประเมิน {{ "{:,.0f}".format(r.appraised_price) }}</div>{% endif %}
       </div>
       <div class="text-right">
@@ -5205,6 +5228,11 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         r["led_occupant"] = ex.get("occupant")
         r["led_sale_location"] = ex.get("sale_location")
         r["led_schedule"] = ex.get("schedule") or []
+        # ราคาเริ่มต้นตามเกณฑ์แต่ละนัด (นัด1=100% .. นัด4+=70% ของราคาประเมิน)
+        _appr = r.get("appraised_price") or r.get("opening_price")
+        for _s in r["led_schedule"]:
+            _s["pct"] = led_reserve_pct(_s.get("round"))
+            _s["start_price"] = led_reserve_price(_appr, _s.get("round"))
         if _blank(r.get("district")):
             r["district"] = None
         if _blank(r.get("subdistrict")):
@@ -6926,6 +6954,9 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
                 it["next_round"] = ni
                 it["days_left"] = (nd - today).days
                 it["total_rounds"] = sum(1 for i in range(1, 9) if op.get(f"biddate{i}"))
+                # ราคาเริ่มต้นจริงของนัดถัดไป (ตามเกณฑ์ นัด4+=70% ไม่ใช่ 100% เสมอ)
+                it["start_pct"] = led_reserve_pct(ni)
+                it["start_price"] = led_reserve_price(r["appraised_price"], ni)
                 items.append(it)
             from collections import Counter
             dcnt = Counter(it["next_date"] for it in items)
