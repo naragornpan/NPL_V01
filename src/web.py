@@ -6901,8 +6901,16 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
                         on ls.external_ref = g.external_ref
                      where g.source_code = 'led_auction'
                 """).fetchall()
+                # ทรัพย์ที่ "จบแล้ว" (ขายได้ หรือ ถอนการยึด) — ตัดออกจากกำลังประมูล
+                # แม้จะยังมีนัดข้างหน้าในตาราง (นัดที่เหลือจะไม่เกิดจริงเพราะขาย/ถอนแล้ว)
+                done = {row["ref"] for row in conn.execute(
+                    "select distinct matched_ref ref from led_auction_results "
+                    "where matched_ref is not null and (is_sold or result ilike '%ถอน%')"
+                ).fetchall()}
             items: list = []
             for r in raw:
+                if r["ref"] in done:            # ขาย/ถอนแล้ว ไม่ต้องโชว์ในกำลังประมูล
+                    continue
                 op = r["op"] or {}
                 futs = []
                 for i in range(1, 9):
