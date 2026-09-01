@@ -61,6 +61,9 @@ def main() -> int:
                     help="1=กทม+ปริมณฑล 2=+EEC 3=+หัวเมืองภาค")
     ap.add_argument("--provinces", default=os.environ.get("TARGET_PROVINCES", ""),
                     help="ระบุเองเพื่อ override tier")
+    ap.add_argument("--all-offices", action="store_true",
+                    help="LED: ดึงทุกสำนักงานทั่วประเทศ (ไม่กรอง tier) — ปริมาณมาก "
+                         "เหมาะกับ backfill/กวาดเต็ม ควบคู่กับ --days-ahead ที่พอเหมาะ")
     ap.add_argument("--max-pages", type=int, default=20)
     ap.add_argument("--full", action="store_true",
                     help="ไล่ครบทุกหน้า ไม่หยุดแม้ไม่เจอของใหม่ (ใช้ตอนกวาดเต็มรอบ)")
@@ -74,18 +77,25 @@ def main() -> int:
     provinces = [p.strip() for p in args.provinces.split(",") if p.strip()]
     if not provinces:
         provinces = provinces_for_tier(args.tier)
+    # office_filter ว่าง ([]) = adapter LED ดึง "ทุกสำนักงาน" (follow_up ไม่กรอง)
+    office_filter = [] if args.all_offices else office_filter_for_tier(args.tier)
     config = {"provinces": provinces, "max_pages": args.max_pages,
-              "office_filter": office_filter_for_tier(args.tier)}
+              "office_filter": office_filter}
     # ส่งช่วงวันให้ LED (adapter อื่นไม่สนใจคีย์นี้)
     if args.days_ahead is not None:
         config["days_ahead"] = args.days_ahead
     if args.days_back is not None:
         config["days_back"] = args.days_back
 
+    if args.all_offices:
+        log.info("โหมด --all-offices | ดึงทุกสำนักงานทั่วประเทศ (ปริมาณมาก) "
+                 "| days_ahead=%s days_back=%s", config.get("days_ahead", 45),
+                 config.get("days_back", 3))
     est = estimated_runtime_minutes(args.tier, args.max_pages, 3.0)
-    log.info("tier %s | %s จังหวัด | ประเมินเวลารัน ~%.0f นาที",
-             args.tier, len(provinces), est)
-    if est > 25:
+    if not args.all_offices:
+        log.info("tier %s | %s จังหวัด | ประเมินเวลารัน ~%.0f นาที",
+                 args.tier, len(provinces), est)
+    if est > 25 and not args.all_offices:
         log.warning("เกิน timeout ของ GitHub Actions (30 นาที) — "
                     "ลด --max-pages หรือแตก workflow เป็นหลาย job")
 
