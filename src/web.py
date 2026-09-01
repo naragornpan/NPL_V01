@@ -5629,6 +5629,36 @@ def api_nearby(lat: str = Query(""), lng: str = Query("")):
 
 _MAP_POINT_CAP = 1500          # หมุดสูงสุดต่อการโหลดหนึ่งครั้ง (กันเบราว์เซอร์ค้าง)
 
+# ── ทรัพย์ที่ขายได้/ถอนการยึดแล้ว — ตัดออกจากแผนที่ (เหมือนหน้ากำลังประมูล) ──
+_SOLD_REFS_CACHE: dict = {"t": 0.0, "s": frozenset()}
+_SOLD_REFS_TTL = 600           # 10 นาที (รีเฟรชเองหลัง led_results รันเข้าใหม่)
+
+
+def _sold_withdrawn_refs() -> frozenset:
+    """คืนเซ็ต matched_ref ของทรัพย์ที่ 'จบแล้ว' — ขายได้ หรือ ถอนการยึด
+
+    ใช้ตัดหมุดออกจากแผนที่ ตรรกะเดียวกับ done ในหน้า /upcoming
+    cache 10 นาที กันยิง DB ทุกครั้งที่เลื่อนแผนที่
+    """
+    import time as _t
+    if DEMO_MODE:
+        return frozenset()
+    now = _t.time()
+    if _SOLD_REFS_CACHE["t"] and now - _SOLD_REFS_CACHE["t"] < _SOLD_REFS_TTL:
+        return _SOLD_REFS_CACHE["s"]
+    try:
+        from core.db import connect
+        with connect() as conn:
+            rows = conn.execute(
+                "select distinct matched_ref ref from led_auction_results "
+                "where matched_ref is not null and (is_sold or result ilike '%ถอน%')"
+            ).fetchall()
+        _SOLD_REFS_CACHE["s"] = frozenset(r["ref"] for r in rows)
+        _SOLD_REFS_CACHE["t"] = now
+    except Exception as exc:                                         # noqa: BLE001
+        log.warning("โหลด sold/withdrawn refs ล้มเหลว: %s", str(exc)[:120])
+    return _SOLD_REFS_CACHE["s"]
+
 
 def _parse_bbox(s: str):
     """แปลง 'minLng,minLat,maxLng,maxLat' -> tuple(float*4) ที่ผ่านการตรวจ
@@ -5679,10 +5709,13 @@ def properties_geojson(request: Request,
                              min_grade=min_grade, show_special=show_special,
                              is_admin=is_admin, district=district, bbox=bb,
                              page=1, page_size=_MAP_POINT_CAP)
+    done = _sold_withdrawn_refs()          # ทรัพย์ที่ขาย/ถอนแล้ว — ไม่ต้องขึ้นแผนที่
     capped = total > len(rows)
     feats = []
     for r in rows:
         if r.get("lat") is None or r.get("lng") is None:
+            continue
+        if r.get("external_ref") in done:  # จบประมูลแล้ว (ขายได้/ถอนการยึด) ตัดหมุดออก
             continue
         source = next((l for l in r.get("links", []) if l.get("kind") == "source"), None)
         feats.append({
@@ -8042,6 +8075,7 @@ def admin_led_fill_province(request: Request, token: str = Query("")):
                     filled += 1
             conn.commit()
         _MAP_CACHE.clear()                          # ล้าง cache แผนที่ให้เห็นผลทันที
+        _SOLD_REFS_CACHE["t"] = 0.0                 # บังคับโหลดเซ็ตขาย/ถอนใหม่
     except Exception as exc:                        # noqa: BLE001
         return PlainTextResponse(f"ผิดพลาด: {str(exc)[:200]}", status_code=500)
     return PlainTextResponse(
