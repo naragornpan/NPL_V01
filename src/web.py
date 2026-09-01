@@ -177,11 +177,40 @@ def user_fav_pairs(uid: str | None) -> set:
         return set()
 
 
+# บทบาทผู้ใช้ (onboarding) — ลำดับนี้ใช้เรียงการ์ดในฟอร์มด้วย
+USER_ROLES = {
+    "buy":    {"emoji": "🏠", "label": "หาซื้อบ้านไว้อยู่เอง"},
+    "invest": {"emoji": "📈", "label": "หาทรัพย์เพื่อลงทุน"},
+    "rent":   {"emoji": "🔑", "label": "หาบ้าน/คอนโดเช่า"},
+    "sell":   {"emoji": "💰", "label": "มีทรัพย์อยากปล่อยขาย/เช่า"},
+}
+
+
+def current_user_row(uid: str | None) -> dict | None:
+    """คืนข้อมูลผู้ใช้ (roles/intent/onboarded_at) — None ถ้าไม่มีหรืออ่านไม่ได้"""
+    if not uid or DEMO_MODE:
+        return None
+    try:
+        from core.db import connect
+        with connect() as conn:
+            r = conn.execute(
+                "select line_user_id, display_name, roles, intent, onboarded_at "
+                "from app_users where line_user_id=%s", (uid,)).fetchone()
+            return dict(r) if r else None
+    except Exception as exc:                                         # noqa: BLE001
+        log.warning("โหลดข้อมูลผู้ใช้ล้มเหลว (รัน migration 046?): %s", str(exc)[:100])
+        return None
+
+
 def _finish_login(uid: str, name, pic, next_url: str):
     """upsert ผู้ใช้ + ตั้ง cookie + redirect — ใช้ร่วมทั้ง LINE และ Google
     uid เป็นคีย์รวม เช่น 'line:Uxxxx' หรือ 'google:1234' (เก็บใน app_users.line_user_id)
+
+    ผู้ใช้ใหม่ที่ยังไม่กรอก onboarding → เด้งไปหน้า /onboarding ก่อน (เก็บ segment)
     """
+    import urllib.parse
     from fastapi.responses import RedirectResponse
+    onboarded = True   # เช็คไม่ได้ (ยังไม่รัน migration 046) → อย่าบังคับ onboarding
     if not DEMO_MODE:
         try:
             from core.db import connect
@@ -197,8 +226,19 @@ def _finish_login(uid: str, name, pic, next_url: str):
                 conn.commit()
         except Exception as exc:                                    # noqa: BLE001
             log.warning("บันทึกผู้ใช้ล้มเหลว (รัน migration 037?): %s", str(exc)[:120])
-    resp = RedirectResponse(next_url if next_url.startswith("/") else "/favorites",
-                            status_code=303)
+        try:
+            from core.db import connect
+            with connect() as conn:
+                r = conn.execute(
+                    "select onboarded_at from app_users where line_user_id=%s",
+                    (uid,)).fetchone()
+                onboarded = bool(r and r["onboarded_at"])
+        except Exception:                                           # noqa: BLE001
+            onboarded = True
+    dest = next_url if next_url.startswith("/") else "/favorites"
+    if not onboarded:
+        dest = "/onboarding?next=" + urllib.parse.quote(dest, safe="")
+    resp = RedirectResponse(dest, status_code=303)
     resp.set_cookie(USER_COOKIE, make_user_cookie(uid), max_age=30 * 86400,
                     httponly=True, samesite="lax", secure=True)
     resp.delete_cookie("npa_oauth")
@@ -1491,6 +1531,7 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
         {% if user_logged_in %}
         <a href="/sell" class="navlink whitespace-nowrap" style="color:var(--survey)">+ ลงประกาศ</a>
         <a href="/favorites" class="navlink whitespace-nowrap">❤️ โปรด</a>
+        <a href="/onboarding" class="navlink whitespace-nowrap">🔔 ความสนใจ</a>
         <a href="/my-listings" class="navlink whitespace-nowrap">ประกาศของฉัน</a>
         <a href="/auth/logout" class="navlink whitespace-nowrap text-slate-400">ออกจากระบบ</a>
         {% else %}
@@ -3724,6 +3765,156 @@ loadProps();
       <a href="/privacy" class="brandlink">นโยบายความเป็นส่วนตัว</a></p>
   </div>
 </div>
+{% endblock %}
+""",
+"onboarding.html": """
+{% extends "layout.html" %}{% block body %}
+<div class="max-w-xl mx-auto mt-4">
+  <div class="sheet p-5 sm:p-7">
+    <h1 class="text-xl font-semibold">{% if editing %}แก้ความสนใจของคุณ{% else %}ยินดีต้อนรับ 👋 บอกเราหน่อย{% endif %}</h1>
+    <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+      เลือกสิ่งที่คุณกำลังมองหา แล้วเราจะ<b>ส่งทรัพย์ที่ตรงใจเข้า LINE</b>
+      เมื่อมีของใหม่/ราคาลด/ใกล้วันประมูล — เลือกได้มากกว่า 1 ข้อ</p>
+
+    <form method="post" action="/onboarding" class="mt-5 space-y-6">
+      <input type="hidden" name="next" value="{{ next_url }}">
+
+      <!-- บทบาท -->
+      <div>
+        <div class="text-sm font-medium mb-2">คุณมาหาอะไร?</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {% for key, r in roles.items() %}
+          <label class="roleopt flex items-center gap-2.5 rounded-xl border px-3.5 py-3 cursor-pointer"
+                 style="border-color:var(--rule)">
+            <input type="checkbox" name="role" value="{{ key }}" class="rolechk w-4 h-4"
+                   {% if key in sel_roles %}checked{% endif %}>
+            <span class="text-lg">{{ r.emoji }}</span>
+            <span class="text-sm">{{ r.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- ทำเล + ประเภท (ทุกบทบาทที่เป็นฝั่งหา) -->
+      <div class="secblk space-y-4" data-need="buy,invest,rent,sell">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-slate-500">จังหวัดที่สนใจ</label>
+            <select name="province" id="ob-prov" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    style="border-color:var(--rule)">
+              <option value="">— ทุกจังหวัด —</option>
+              {% for p in provinces %}<option value="{{ p }}" {% if intent.province==p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">อำเภอ/เขต</label>
+            <select name="district" id="ob-dist" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    style="border-color:var(--rule)">
+              <option value="">— ทุกอำเภอ —</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- ฝั่งซื้อ/ลงทุน/เช่า: ประเภท + งบ -->
+      <div class="secblk grid grid-cols-2 gap-3" data-need="buy,invest,rent">
+        <div>
+          <label class="text-xs text-slate-500">ประเภททรัพย์</label>
+          <select name="ptype" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" style="border-color:var(--rule)">
+            <option value="">— ทุกประเภท —</option>
+            {% for k, v in type_labels.items() %}<option value="{{ k }}" {% if intent.ptype==k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="secblk" data-need="buy,invest">
+          <label class="text-xs text-slate-500">งบซื้อสูงสุด (บาท)</label>
+          <input type="number" name="budget_max" inputmode="numeric" value="{{ intent.budget_max or '' }}"
+                 placeholder="เช่น 3000000" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" style="border-color:var(--rule)">
+        </div>
+      </div>
+
+      <!-- ซื้ออยู่จริง: ห้องนอน -->
+      <div class="secblk" data-need="buy">
+        <label class="text-xs text-slate-500">ห้องนอนขั้นต่ำ</label>
+        <select name="bedrooms" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" style="border-color:var(--rule)">
+          {% for b in ['', '1', '2', '3', '4'] %}<option value="{{ b }}" {% if intent.bedrooms==b %}selected{% endif %}>{{ b if b else '— ไม่ระบุ —' }}{% if b=='4' %}+{% endif %}</option>{% endfor %}
+        </select>
+      </div>
+
+      <!-- นักลงทุน: เกรดขั้นต่ำ + สนใจประมูล -->
+      <div class="secblk grid grid-cols-2 gap-3 items-end" data-need="invest">
+        <div>
+          <label class="text-xs text-slate-500">เกรดขั้นต่ำที่รับได้</label>
+          <select name="min_grade" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" style="border-color:var(--rule)">
+            {% for g in ['', 'A', 'B', 'C'] %}<option value="{{ g }}" {% if intent.min_grade==g %}selected{% endif %}>{{ g if g else '— ไม่จำกัด —' }}</option>{% endfor %}
+          </select>
+        </div>
+        <label class="flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer text-sm" style="border-color:var(--rule)">
+          <input type="checkbox" name="led_interest" value="1" class="w-4 h-4" {% if intent.led_interest %}checked{% endif %}>
+          สนใจทรัพย์ประมูล (กรมบังคับคดี)
+        </label>
+      </div>
+
+      <!-- หาเช่า: งบเช่า + เลี้ยงสัตว์ -->
+      <div class="secblk grid grid-cols-2 gap-3 items-end" data-need="rent">
+        <div>
+          <label class="text-xs text-slate-500">งบเช่า/เดือน (บาท)</label>
+          <input type="number" name="budget_rent" inputmode="numeric" value="{{ intent.budget_rent or '' }}"
+                 placeholder="เช่น 12000" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" style="border-color:var(--rule)">
+        </div>
+        <label class="flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer text-sm" style="border-color:var(--rule)">
+          <input type="checkbox" name="pets" value="1" class="w-4 h-4" {% if intent.pets %}checked{% endif %}>
+          ต้องเลี้ยงสัตว์ได้
+        </label>
+      </div>
+
+      <!-- ปล่อยบ้าน: เบอร์ติดต่อ -->
+      <div class="secblk" data-need="sell">
+        <label class="text-xs text-slate-500">เบอร์ติดต่อ (สำหรับให้ผู้สนใจติดต่อ)</label>
+        <input type="tel" name="phone" value="{{ intent.phone or '' }}" placeholder="08x-xxx-xxxx"
+               class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" style="border-color:var(--rule)">
+        <p class="text-[11px] text-slate-400 mt-1">แสดงบนประกาศของคุณเท่านั้น เพื่อให้ผู้สนใจติดต่อได้</p>
+      </div>
+
+      <div class="flex items-center gap-3 pt-1">
+        <button type="submit" class="rounded-lg px-5 py-2.5 text-white font-medium"
+                style="background:var(--survey)">บันทึกและไปต่อ</button>
+        <a href="{{ next_url }}" class="text-sm text-slate-400">ข้ามไปก่อน</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const DBP = {{ districts_by_province|tojson }};
+const savedDist = {{ (intent.district or '')|tojson }};
+const provSel = document.getElementById('ob-prov');
+const distSel = document.getElementById('ob-dist');
+function fillDistricts(){
+  const list = DBP[provSel.value] || [];
+  distSel.innerHTML = '<option value="">— ทุกอำเภอ —</option>' +
+    list.map(d => `<option value="${d}">${d}</option>`).join('');
+  if(savedDist && list.includes(savedDist)) distSel.value = savedDist;
+}
+provSel.addEventListener('change', fillDistricts);
+fillDistricts();
+
+// โชว์/ซ่อนแต่ละส่วนตามบทบาทที่ติ๊ก
+const chks = [...document.querySelectorAll('.rolechk')];
+function updateSections(){
+  const on = new Set(chks.filter(c=>c.checked).map(c=>c.value));
+  document.querySelectorAll('.secblk').forEach(el=>{
+    const need = (el.dataset.need||'').split(',');
+    el.style.display = need.some(r=>on.has(r)) ? '' : 'none';
+  });
+  document.querySelectorAll('.roleopt').forEach(l=>{
+    const c = l.querySelector('.rolechk');
+    l.style.background = c.checked ? 'var(--paper-2, #f1f5f9)' : '';
+    l.style.borderColor = c.checked ? 'var(--survey)' : 'var(--rule)';
+  });
+}
+chks.forEach(c=>c.addEventListener('change', updateSections));
+updateSections();
+</script>
 {% endblock %}
 """,
 "sell.html": """
@@ -6140,6 +6331,80 @@ def user_logout(request: Request, next: str = Query("/")):
     resp = RedirectResponse(next if next.startswith("/") else "/", status_code=303)
     resp.delete_cookie(USER_COOKIE)
     return resp
+
+
+# ---------------------------------------------------------------------
+# Onboarding — เลือกบทบาท + กรอกเกณฑ์ (แยก segment สำหรับ alert/ matching)
+# ---------------------------------------------------------------------
+@app.get("/onboarding", response_class=HTMLResponse)
+def onboarding_page(request: Request, next: str = Query("/favorites")):
+    from fastapi.responses import RedirectResponse
+    uid = current_user(request)
+    if not uid:
+        return RedirectResponse("/login?next=/onboarding", status_code=303)
+    nxt = next if next.startswith("/") else "/favorites"
+    row = current_user_row(uid) or {}
+    intent = row.get("intent") or {}
+    if isinstance(intent, str):
+        try:
+            intent = json.loads(intent)
+        except (TypeError, ValueError):
+            intent = {}
+    opts = filter_options()
+    return env.get_template("onboarding.html").render(
+        title="ตั้งค่าความสนใจ", roles=USER_ROLES, sel_roles=(row.get("roles") or []),
+        intent=intent, provinces=opts["provinces"],
+        districts_by_province=opts["districts_by_province"],
+        editing=bool(row.get("onboarded_at")), next_url=nxt,
+        **ubase(request))
+
+
+@app.post("/onboarding")
+async def onboarding_save(request: Request):
+    from fastapi.responses import RedirectResponse
+    uid = current_user(request)
+    if not uid:
+        return RedirectResponse("/login?next=/onboarding", status_code=303)
+    form = await request.form()
+    roles = [r for r in form.getlist("role") if r in USER_ROLES]
+
+    def _s(key, maxlen=80):
+        v = (form.get(key) or "").strip()
+        return v[:maxlen] or None
+
+    def _int(key):
+        v = (form.get(key) or "").strip().replace(",", "")
+        return int(v) if v.isdigit() else None
+
+    # เก็บเฉพาะฟิลด์ที่มีค่า — เป็นเกณฑ์สำหรับ matching/alert ภายหลัง
+    intent = {
+        "province": _s("province"),
+        "district": _s("district"),
+        "ptype": _s("ptype", 40),
+        "budget_max": _int("budget_max"),
+        "bedrooms": _s("bedrooms", 10),
+        "budget_rent": _int("budget_rent"),
+        "pets": form.get("pets") == "1",
+        "min_grade": _s("min_grade", 2),
+        "led_interest": form.get("led_interest") == "1",
+        "phone": _s("phone", 20),
+    }
+    intent = {k: v for k, v in intent.items() if v not in (None, "", False)}
+
+    if not DEMO_MODE:
+        try:
+            from core.db import connect
+            with connect() as conn:
+                conn.execute(
+                    "update app_users set roles=%s, intent=%s::jsonb, "
+                    "onboarded_at=coalesce(onboarded_at, now()) where line_user_id=%s",
+                    (roles, json.dumps(intent, ensure_ascii=False), uid))
+                conn.commit()
+        except Exception as exc:                                    # noqa: BLE001
+            log.warning("บันทึก onboarding ล้มเหลว (รัน migration 046?): %s", str(exc)[:120])
+
+    nxt = form.get("next") or "/favorites"
+    return RedirectResponse(nxt if nxt.startswith("/") else "/favorites", status_code=303)
 
 
 # ---------------------------------------------------------------------
