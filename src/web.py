@@ -4537,9 +4537,14 @@ window.doRenovate=function(lid){
       {% for d in date_opts %}<option value="{{ d.iso }}" {% if d.iso==date %}selected{% endif %}>{{ d.label }} ({{ d.n }})</option>{% endfor %}
     </select></label>
   <label>จังหวัด
-    <select name="province" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
+    <select name="province" onchange="if(this.form.district)this.form.district.value='';this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white">
       <option value="">ทุกจังหวัด</option>
       {% for p in provinces %}<option value="{{ p }}" {% if p==province %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select></label>
+  <label>อำเภอ/เขต
+    <select name="district" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white max-w-[170px]">
+      <option value="">ทุกอำเภอ</option>
+      {% for d in districts %}<option value="{{ d }}" {% if d==district %}selected{% endif %}>{{ d }}</option>{% endfor %}
     </select></label>
 </form>
 
@@ -6904,9 +6909,9 @@ def auction_results(request: Request, result: str = Query(""),
 
 
 @app.get("/upcoming", response_class=HTMLResponse)
-def upcoming_auctions(request: Request, province: str = Query(""), date: str = Query(""),
-                      ptype: str = Query(""), sel_round: int = Query(0, alias="round"),
-                      page: int = Query(1, ge=1)):
+def upcoming_auctions(request: Request, province: str = Query(""), district: str = Query(""),
+                      date: str = Query(""), ptype: str = Query(""),
+                      sel_round: int = Query(0, alias="round"), page: int = Query(1, ge=1)):
     """หน้า "กำลังจะประมูล" — ทรัพย์ LED ที่นัดถัดไปยังไม่ถึง (จาก biddate) จัดตามวันนัดถัดไป (ใกล้สุดก่อน)"""
     import datetime as _dt
     if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
@@ -6917,6 +6922,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
     groups: list = []
     total = 0
     provinces: list = []
+    districts: list = []
     date_opts: list = []
     round_opts: list = []
     types: list = []
@@ -6982,12 +6988,17 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
             rcnt = Counter(it["next_round"] for it in items)
             round_opts = [{"round": rr, "n": rcnt[rr]} for rr in sorted(rcnt)]
             provinces = sorted({it["province"] for it in items if it["province"]})
+            # อำเภอ (ผูกกับจังหวัดที่เลือก — ถ้ายังไม่เลือกจังหวัด โชว์ทุกอำเภอ)
+            districts = sorted({it["district"] for it in items
+                                if it["district"] and (not province or it["province"] == province)})
             tcnt = Counter(it["property_type"] for it in items if it["property_type"])
             types = [{"code": c, "label": TYPE_LABELS.get(c, c), "n": tcnt[c]}
                      for c in sorted(tcnt, key=lambda x: -tcnt[x])]
 
             def _keep(it):
                 if province and it["province"] != province:
+                    return False
+                if district and it["district"] != district:
                     return False
                 if ptype and it["property_type"] != ptype:
                     return False
@@ -7012,6 +7023,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
     return env.get_template("auction_upcoming.html").render(
         title="กำลังจะประมูล — ทรัพย์ขายทอดตลาด กรมบังคับคดี", groups=groups, count=total,
         page=page, pages=pages, province=province, provinces=provinces,
+        district=district, districts=districts,
         date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
         ptype=ptype, types=types,
         canonical=_abs_url(request, "/upcoming"),
