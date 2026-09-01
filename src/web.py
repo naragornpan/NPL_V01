@@ -2321,13 +2321,13 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
 
   {% if r.led_schedule %}
   <div class="sheet p-4">
-    <h2 class="font-semibold text-sm mb-2">📅 นัดประมูล <span class="text-xs font-normal text-slate-400">(ราคาเริ่มต้นตามเกณฑ์กรมฯ: นัด1=100% นัด2=90% นัด3=80% นัด4+=70% ของประเมิน)</span></h2>
+    <h2 class="font-semibold text-sm mb-2">📅 นัดประมูล{% if is_admin %} <span class="text-xs font-normal text-slate-400">(ราคาเริ่มต้นตามเกณฑ์กรมฯ: นัด1=100% นัด2=90% นัด3=80% นัด4+=70% ของประเมิน)</span>{% endif %}</h2>
     <div class="flex flex-wrap gap-2">
       {% for s in r.led_schedule %}
       {% set is_soldround = auc_result and auc_result.is_sold and auc_result.round==s.round %}
       <span class="text-xs px-2.5 py-1.5 rounded-lg border flex flex-col leading-tight {% if is_soldround %}border-emerald-400 bg-emerald-50 text-emerald-700 font-semibold{% elif s.past %}bg-slate-100 text-slate-400{% else %}text-slate-700 bg-white{% endif %}">
         <span>นัด {{ s.round }} · {{ s.label }}{% if is_soldround %} · ✓ ขายรอบนี้{% elif s.past %} · ผ่านแล้ว{% endif %}</span>
-        {% if s.start_price %}<span class="text-[10px] {% if is_soldround %}text-emerald-600{% else %}text-slate-400{% endif %}">เริ่ม {{ "{:,}".format(s.start_price) }} ({{ s.pct }}%)</span>{% endif %}</span>
+        {% if is_admin and s.start_price %}<span class="text-[10px] {% if is_soldround %}text-emerald-600{% else %}text-slate-400{% endif %}">เริ่ม {{ "{:,}".format(s.start_price) }} ({{ s.pct }}%)</span>{% endif %}</span>
       {% endfor %}
     </div>
     {% if auc_result and auc_result.is_sold and auc_result.round %}<div class="text-xs text-emerald-700 mt-2">✓ ทรัพย์นี้ขายได้ที่ <b>นัด {{ auc_result.round }}</b> ({{ auc_result.date_label }})</div>{% endif %}
@@ -4792,7 +4792,7 @@ window.doRenovate=function(lid){
     </div>
     <div class="mt-2.5 flex items-end justify-between gap-2">
       <div>
-        <div class="text-[11px] text-slate-400">ราคาเริ่มต้น นัด {{ r.next_round }}{% if r.start_pct and r.start_pct < 100 %} <span class="text-emerald-600">({{ r.start_pct }}%)</span>{% endif %}</div>
+        <div class="text-[11px] text-slate-400">ราคาเริ่มต้น นัด {{ r.next_round }}{% if is_admin and r.start_pct and r.start_pct < 100 %} <span class="text-emerald-600">({{ r.start_pct }}%)</span>{% endif %}</div>
         <div class="text-lg font-bold leading-tight" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.start_price or r.opening_price or 0) }}</div>
         {% if r.appraised_price %}<div class="text-[11px] text-slate-400">ประเมิน {{ "{:,.0f}".format(r.appraised_price) }}</div>{% endif %}
       </div>
