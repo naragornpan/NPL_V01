@@ -4565,7 +4565,7 @@ window.doRenovate=function(lid){
           {% if r.subdistrict or r.district %}<span class="text-slate-500 font-normal">· {{ r.district or r.subdistrict }}</span>{% endif %}</div>
         <div class="text-xs text-slate-400 mt-0.5">
           <span class="text-slate-500 font-medium">นัด {{ r.next_round }}{% if r.total_rounds %}/{{ r.total_rounds }}{% endif %}</span>
-          {% if r.province %} · {{ r.province }}{% endif %}</div>
+          {% if r.province %} · {{ r.province }}{% endif %}{% if r.deed %} · โฉนด {{ r.deed }}{% endif %}</div>
         {% if r.title %}<div class="text-[11px] text-slate-400 line-clamp-1 mt-0.5">{{ r.title }}</div>{% endif %}
       </div>
       {% if r.grade %}<span class="seal g-{{ r.grade }}">{{ r.grade }}</span>{% endif %}
@@ -6972,6 +6972,8 @@ def upcoming_auctions(request: Request, province: str = Query(""), date: str = Q
                 # ราคาเริ่มต้นจริงของนัดถัดไป (ตามเกณฑ์ นัด4+=70% ไม่ใช่ 100% เสมอ)
                 it["start_pct"] = led_reserve_pct(ni)
                 it["start_price"] = led_reserve_price(r["appraised_price"], ni)
+                _deed = (op.get("deedno") or "").strip()   # เลขโฉนดจากประกาศทรัพย์
+                it["deed"] = _deed if _deed and _deed not in ("-", "0") else None
                 items.append(it)
             from collections import Counter
             dcnt = Counter(it["next_date"] for it in items)
