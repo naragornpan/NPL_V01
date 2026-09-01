@@ -940,9 +940,14 @@ def _reasons_to_flags(reasons) -> list[dict]:
 def build_filter(province=None, district=None, ptype=None, max_price=None,
                  min_price=None, institution=None, min_grade=None,
                  show_special=False, hide_critical=False,
-                 near_transit=None) -> tuple[str, tuple]:
+                 near_transit=None, bbox=None) -> tuple[str, tuple]:
     """สร้าง WHERE ให้ฐานข้อมูล — คืน (sql, params)"""
     conds, params = [], []
+    if bbox:
+        # กรองในกรอบมุมมองแผนที่ (minLng,minLat,maxLng,maxLat) — คีย์ของการโหลดแบบ viewport
+        # ให้ SQL ตัดตั้งแต่ต้น ไม่ต้องดึงทั้งประเทศมาแล้วค่อยตัดใน python
+        conds.append("lat between %s and %s and lng between %s and %s")
+        params += [bbox[1], bbox[3], bbox[0], bbox[2]]
     if province:
         conds.append("province = %s"); params.append(province)
     if district:
@@ -1044,14 +1049,15 @@ def filter_options(province: str | None = None) -> dict:
 def fetch_rows(province=None, ptype=None, max_price=None, hide_critical=False,
                institution=None, min_grade=None, show_special=False,
                is_admin=False, district=None, min_price=None,
-               page=None, page_size=None, order=None, near_transit=None):
+               page=None, page_size=None, order=None, near_transit=None,
+               bbox=None):
     """คืน (rows, total) — กรองและแบ่งหน้าที่ SQL"""
     settings = current_settings()
     where, params = build_filter(
         province=province, district=district, ptype=ptype,
         max_price=max_price, min_price=min_price, institution=institution,
         min_grade=min_grade, show_special=show_special, hide_critical=hide_critical,
-        near_transit=near_transit)
+        near_transit=near_transit, bbox=bbox)
 
     total = count_rows(where, params)
     limit = page_size
@@ -2823,33 +2829,51 @@ function popupHTML(p){
     </div>`;
 }
 
-let _reqSeq = 0, _fitted = false;
+// กรอบมุมมองปัจจุบัน -> bbox=minLng,minLat,maxLng,maxLat
+// โหลดเฉพาะทรัพย์ในกรอบที่เห็น (viewport) — ข้อมูลทั้งประเทศมีหลายหมื่น
+// ถ้าส่งทั้งหมดทีเดียวเบราว์เซอร์ค้าง จึงตัดตาม bbox + เพดานฝั่งเซิร์ฟเวอร์
+function bboxParam(){
+  const b=map.getBounds();
+  return 'bbox='+[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()]
+    .map(x=>x.toFixed(5)).join(',');
+}
+
+let _reqSeq = 0;
 function loadProps(){
   const my = ++_reqSeq;                       // กันผลเก่าซ้อนผลใหม่ (แก้หมุดเบิล)
   const cEl=document.getElementById('srccount');
   if(cEl) cEl.textContent='กำลังโหลดแผนที่…';
-  fetch('/api/properties.geojson?'+selectedQS()).then(r=>r.json()).then(gj=>{
+  fetch('/api/properties.geojson?'+selectedQS()+'&'+bboxParam()).then(r=>r.json()).then(gj=>{
     if(my !== _reqSeq) return;                // มีคำขอใหม่กว่าแล้ว — ทิ้งผลนี้
     cluster.clearLayers();                    // เคลียร์ตอน "ได้ผลจริง" ไม่ใช่ตอนเริ่ม
-    const markers=[]; const bounds=[];
+    const markers=[];
     gj.features.forEach(f=>{
       const p=f.properties, c=f.geometry.coordinates;
       const mk=L.circleMarker([c[1],c[0]],{radius:8,color:'#fff',weight:2,fillColor:colorFor(p),fillOpacity:0.95});
       mk.on('click', function(){                // ผูก popup ตอนคลิก (lazy)
         if(!mk._bound){ mk.bindPopup(popupHTML(p),{maxWidth:300}); mk._bound=true; mk.openPopup(); }
       });
-      markers.push(mk); bounds.push([c[1],c[0]]);
+      markers.push(mk);
     });
     cluster.addLayers(markers);               // เพิ่มทีเดียว (เร็วกว่าเพิ่มทีละหมุด)
-    if(bounds.length && !_fitted){ map.fitBounds(bounds,{padding:[40,40],maxZoom:14}); _fitted=true; }
     if(cEl){
       const all=[...document.querySelectorAll('.srcflt')];
       const on=all.filter(b=>b.checked).length;
-      const flt=(on && on<all.length) ? (' · กรอง '+on+' แหล่ง') : ' · ทุกแหล่ง';
-      cEl.textContent='แสดง '+(gj.features.length).toLocaleString('th-TH')+' ทรัพย์'+flt;
+      const flt=(on && on<all.length) ? (' · กรอง '+on+' แหล่ง') : '';
+      const shown=(gj.features.length).toLocaleString('th-TH');
+      cEl.textContent = gj.capped
+        ? ('แสดง '+shown+' ทรัพย์ในกรอบนี้ · ซูมเข้าเพื่อดูให้ครบ'+flt)
+        : ('แสดง '+shown+' ทรัพย์ในกรอบนี้'+flt);
     }
   }).catch(()=>{ if(my===_reqSeq && cEl) cEl.textContent='โหลดแผนที่ไม่สำเร็จ ลองใหม่'; });
 }
+
+// เลื่อน/ซูมแล้วค่อยโหลดใหม่ (debounce กันยิงถี่ระหว่างลาก)
+let _mvTimer=null;
+map.on('moveend', function(){
+  clearTimeout(_mvTimer);
+  _mvTimer=setTimeout(loadProps, 350);
+});
 
 loadProps();
 </script>
@@ -5603,6 +5627,27 @@ def api_nearby(lat: str = Query(""), lng: str = Query("")):
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
+_MAP_POINT_CAP = 1500          # หมุดสูงสุดต่อการโหลดหนึ่งครั้ง (กันเบราว์เซอร์ค้าง)
+
+
+def _parse_bbox(s: str):
+    """แปลง 'minLng,minLat,maxLng,maxLat' -> tuple(float*4) ที่ผ่านการตรวจ
+
+    คืน None ถ้ารูปแบบผิดหรืออยู่นอกกรอบประเทศไทย — ผู้เรียกจะถือว่า 'ทั้งประเทศ'
+    (ยังมี cap คุมอยู่ จึงไม่ระเบิดแม้ไม่ได้ส่ง bbox)
+    """
+    try:
+        a, b, c, d = (float(x) for x in s.split(","))
+    except (ValueError, AttributeError):
+        return None
+    # เผื่อขอบ (แผนที่เลื่อนเลยขอบประเทศได้) แล้ว clamp ให้อยู่ในกรอบไทยกว้าง ๆ
+    minLng, maxLng = sorted((a, c))
+    minLat, maxLat = sorted((b, d))
+    if maxLng < 90 or minLng > 112 or maxLat < 4 or minLat > 22:
+        return None
+    return (max(90.0, minLng), max(4.0, minLat), min(112.0, maxLng), min(22.0, maxLat))
+
+
 @app.get("/api/properties.geojson")
 def properties_geojson(request: Request,
                        province: str | None = Query(None),
@@ -5613,22 +5658,28 @@ def properties_geojson(request: Request,
                        institution: list[str] | None = Query(None),
                        min_grade: str | None = Query(None),
                        show_special: bool = Query(False),
+                       bbox: str = Query(""),
                        token: str = Query("")):
     import time as _t
     from fastapi.responses import Response
     is_admin = admin_ok(request, token)
+    bb = _parse_bbox(bbox)
+    # ปัดพิกัดกรอบใน cache key (3 ตำแหน่ง ~100 ม.) ลดการสร้างซ้ำตอนเลื่อนเล็กน้อย
+    _bk = tuple(round(v, 3) for v in bb) if bb else ()
     _ck = (tuple(sorted(institution or ())), province or "", district or "", ptype or "",
-           max_price or "", hide_critical, min_grade or "", show_special, is_admin)
+           max_price or "", hide_critical, min_grade or "", show_special, is_admin, _bk)
     _hdr = {"Cache-Control": "public, max-age=600"}
     _now = _t.time()
     _hit = _MAP_CACHE.get(_ck)
     if _hit and _now - _hit[0] < _MAP_TTL:
         return Response(_hit[1], media_type="application/json", headers=_hdr)
-    rows, _ = fetch_rows(province=province or None, ptype=ptype or None,
-                         max_price=_num(max_price),
-                         hide_critical=hide_critical, institution=institution,
-                         min_grade=min_grade, show_special=show_special,
-                         is_admin=is_admin, district=district)
+    rows, total = fetch_rows(province=province or None, ptype=ptype or None,
+                             max_price=_num(max_price),
+                             hide_critical=hide_critical, institution=institution,
+                             min_grade=min_grade, show_special=show_special,
+                             is_admin=is_admin, district=district, bbox=bb,
+                             page=1, page_size=_MAP_POINT_CAP)
+    capped = total > len(rows)
     feats = []
     for r in rows:
         if r.get("lat") is None or r.get("lng") is None:
@@ -5666,7 +5717,8 @@ def properties_geojson(request: Request,
         if isinstance(o, decimal.Decimal):
             return float(o)
         return str(o)
-    body = json.dumps({"type": "FeatureCollection", "features": feats},
+    body = json.dumps({"type": "FeatureCollection", "features": feats,
+                       "total": total, "capped": capped, "cap": _MAP_POINT_CAP},
                       ensure_ascii=False, separators=(",", ":"),
                       default=_je).encode("utf-8")
     _MAP_CACHE[_ck] = (_now, body)
