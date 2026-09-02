@@ -2100,6 +2100,10 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
 </aside>
 {% endif %}
 </div>{# /xl grid #}
+
+{% if is_home and svc_categories %}
+<div class="mt-6">{% include "service_block.html" %}</div>
+{% endif %}
 {% endblock %}
 {% block track %}<script>npaTrack('view_list',{province:{{ (province or '')|tojson }}});</script>{% endblock %}
 """,
@@ -5422,6 +5426,12 @@ def index(request: Request, province: str | None = Query(None), district: str | 
          "name": "แปลงดี", "url": _abs_url(request, "/")},
     ]) if page == 1 else None
 
+    # ฟอร์มขอบริการเรื่องบ้าน (โมดูล leads) — โชว์บนหน้าแรกด้วย (ใต้ทรัพย์โปรโมท)
+    try:
+        import leads as _leads_mod
+        svc_categories = _leads_mod.categories()
+    except Exception:                                       # noqa: BLE001
+        svc_categories = []
     return env.get_template("list.html").render(
         title=seo_title, rows=rows, count=total, page=page, pages=pages,
         canonical=canonical, jsonld=home_jsonld, src=src,
@@ -5435,6 +5445,9 @@ def index(request: Request, province: str | None = Query(None), district: str | 
         hide_critical=hide_critical, qs=qs, sort=sort,
         institution=institution, min_grade=min_grade, show_special=show_special,
         near_transit=near_transit_v,
+        is_home=True, svc_categories=svc_categories,
+        svc_zone="ทำเลของคุณ", svc_province=province or "", svc_district=district or "",
+        svc_source="", svc_ref="",
         **base(is_admin=is_admin, admin_token=token))
 
 
@@ -5947,6 +5960,8 @@ def properties_geojson(request: Request,
                 "source_url": source["url"] if source else None,
                 "source_label": source["label"] if source else None,
                 "geo_precision": r.get("geo_precision"),
+                "province": r.get("province"),
+                "district": r.get("district"),
                 "address": r.get("subdistrict"),
                 "image": r["images_view"][0]["url"],
                 "detail_url": f"/p/{r['source_code']}/{r['external_ref']}",
