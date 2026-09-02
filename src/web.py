@@ -2385,6 +2385,10 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
   </div>
   {% endif %}
 
+  {% if svc_categories %}
+  {% include "service_block.html" %}
+  {% endif %}
+
   {% if r.opening_price %}
   <!-- เครื่องคำนวณผ่อน (ประมาณการ) -->
   <div class="sheet p-4">
@@ -5607,6 +5611,12 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
 
     uid = current_user(request)
     is_fav = (source_code, ref) in user_fav_pairs(uid)
+    # ฟอร์มขอบริการเรื่องบ้าน (โมดูล leads) — โชว์ทุกหน้าทรัพย์
+    try:
+        import leads as _leads_mod
+        svc_categories = _leads_mod.categories()
+    except Exception:                                       # noqa: BLE001
+        svc_categories = []
     return env.get_template("detail.html").render(
         title=r["title"], r=r, specs=specs, auc_result=auc_result,
         comps=comp_blocks[0] if comp_blocks else None,
@@ -5614,6 +5624,10 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
         contact_line_url=current_settings().get("contact_line_url"),
         og_title=og_title, og_desc=og_desc, og_image=og_image, og_type="product",
         og_url=page_url, canonical=page_url, jsonld=jsonld,
+        svc_categories=svc_categories,
+        svc_zone=(r.get("district") or r.get("province") or "ทำเลนี้"),
+        svc_province=r.get("province") or "", svc_district=r.get("district") or "",
+        svc_source=source_code, svc_ref=ref,
         **base(is_admin=is_admin, admin_token=token, user_logged_in=bool(uid)))
 
 
