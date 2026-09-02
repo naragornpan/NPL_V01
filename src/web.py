@@ -8829,6 +8829,35 @@ def health(request: Request, token: str = Query("")):
                                                    **base(is_admin=True, admin_token=token))
 
 
+# ── โมดูลขายลีดบริการเรื่องบ้าน (lead fee) — โค้ดแยกใน leads.py ──────────────
+# ต่อสายด้วยสัญญา conn()/render()/require_admin()/secret_key
+# หมายเหตุ: core.db.connect() ใช้ dict_row แต่ leads.py คาดหวัง tuple rows
+#          (ใช้ _rows()/positional index) จึงห่อ connection ให้เป็น tuple_row ก่อนส่งให้
+try:
+    import contextlib as _contextlib
+
+    import leads as _leads
+    from psycopg.rows import tuple_row as _tuple_row
+
+    @_contextlib.contextmanager
+    def _leads_conn():
+        from core.db import connect as _connect
+        with _connect() as _c:
+            _c.row_factory = _tuple_row          # leads.py อ่านผลเป็น tuple
+            yield _c
+
+    def _leads_render(_name, **_ctx):
+        # เติม context ของ layout (nav/แบรนด์) ให้ทุกหน้าในโมดูล
+        return HTMLResponse(env.get_template(_name).render(**{**base(), **_ctx}))
+
+    _leads.install_templates(TEMPLATES)
+    _leads.install(app, conn=_leads_conn, render=_leads_render,
+                   require_admin=_require_admin, secret_key=SECRET_KEY)
+    log.info("โหลดโมดูล leads (ขายลีดบริการ) แล้ว")
+except Exception as _exc:                          # noqa: BLE001  ไม่ให้โมดูลเสริมล้มทั้งเว็บ
+    log.warning("โหลดโมดูล leads ไม่สำเร็จ: %s", str(_exc)[:200])
+
+
 if __name__ == "__main__":
     import uvicorn
     print("=" * 62)
