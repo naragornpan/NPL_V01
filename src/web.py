@@ -1547,6 +1547,8 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       <a href="/admin/feedback{{ tk }}" class="navlink whitespace-nowrap">ความเห็น</a>
       <a href="/admin/promoted{{ tk }}" class="navlink whitespace-nowrap">โปรโมท</a>
       <a href="/admin/market{{ tk }}" class="navlink whitespace-nowrap">อนุมัติประกาศ</a>
+      <a href="/admin/leads{{ tk }}" class="navlink whitespace-nowrap">ลีดบริการ</a>
+      <a href="/admin/providers{{ tk }}" class="navlink whitespace-nowrap">ผู้ให้บริการ</a>
       <a href="/admin/settings{{ tk }}" class="navlink whitespace-nowrap">ตั้งค่า</a>
       <a href="/admin/sources{{ tk }}" class="navlink whitespace-nowrap">แหล่งข้อมูล</a>
       <a href="/health{{ tk }}" class="navlink whitespace-nowrap">สุขภาพระบบ</a>

@@ -878,7 +878,7 @@ def install(app, conn, render, require_admin, secret_key: str):
                    order by d.created_at desc limit 50""")
             refunds = _rows(cur)
         return render("admin_leads.html", leads=leads, stat=stat, refunds=refunds,
-                      title="ลีดบริการ")
+                      title="ลีดบริการ", is_admin=True)
 
     @app.post("/admin/leads/refund")
     async def admin_leads_refund(request: Request, token: str = ""):
@@ -902,7 +902,7 @@ def install(app, conn, render, require_admin, secret_key: str):
             providers = _rows(cur)
         for p in providers:
             p["k"] = _sig(p["id"])
-        return render("admin_providers.html", providers=providers, title="ผู้ให้บริการ")
+        return render("admin_providers.html", providers=providers, title="ผู้ให้บริการ", is_admin=True)
 
     @app.post("/admin/providers")
     async def admin_provider_add(request: Request, token: str = ""):
