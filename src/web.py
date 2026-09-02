@@ -4732,7 +4732,7 @@ window.doRenovate=function(lid){
 </section>
 
 <div class="sheet p-3 mb-3 rounded-xl text-xs text-slate-500 flex items-start gap-2">
-  <span>💡</span><span>ราคา = ราคาเริ่มต้นของนัดถัดไป (เกณฑ์กรมฯ: นัด1=100% นัด2=90% นัด3=80% นัด4+=70% ของประเมิน) · ของส่วนใหญ่ปิดตั้งแต่นัดต้น ๆ (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบกับกรมบังคับคดีอีกครั้งก่อนไป</span>
+  <span>💡</span><span>ราคา = ราคาเริ่มต้นของนัดถัดไป{% if is_admin %} (เกณฑ์กรมฯ: นัด1=100% นัด2=90% นัด3=80% นัด4+=70% ของประเมิน){% endif %} · ของส่วนใหญ่ปิดตั้งแต่นัดต้น ๆ (ดู <a href="/auction-stats" class="brandlink">กลยุทธ์ประมูล</a>) · ควรตรวจสอบกับกรมบังคับคดีอีกครั้งก่อนไป</span>
 </div>
 
 <form class="sheet p-3 mb-4 flex flex-wrap items-end gap-2 text-sm">
