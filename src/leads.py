@@ -212,6 +212,42 @@ def _json_str(s: str) -> str:
     return json.dumps(s, ensure_ascii=False)
 
 
+def _lead_coords(cur, source_code, external_ref):
+    """พิกัดของลีด = พิกัดทรัพย์ที่กดมา (ถ้ามา จากหน้าทรัพย์) — ลูกค้าไม่ต้องกรอกเอง
+
+    ลีดที่มาจากหน้า zone/หน้าแรกจะไม่มี source/ref → คืน (None, None)
+    ใช้สำหรับปักหมุด/เรียงตามรัศมีในอนาคต ไม่กระทบการจับคู่ปัจจุบัน (ยังใช้จังหวัด/อำเภอ)
+    """
+    if not (source_code and external_ref):
+        return (None, None)
+    try:
+        cur.execute(
+            "select lat, lng from listing_snapshots "
+            "where source_code = %s and external_ref = %s and lat is not null "
+            "order by observed_at desc limit 1",
+            (source_code, external_ref))
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            return (float(row[0]), float(row[1]) if row[1] is not None else None)
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[leads] lead coords lookup failed: {e}")
+    return (None, None)
+
+
+def _province_coords(province: str):
+    """ฐานที่ตั้งร้าน (คร่าว ๆ) = ศูนย์กลางจังหวัด — static ไม่ยิง network"""
+    if not province:
+        return (None, None)
+    try:
+        from core.geocode import PROVINCE_CENTROIDS  # type: ignore
+        c = PROVINCE_CENTROIDS.get(province.strip())
+        if c:
+            return (float(c[0]), float(c[1]))
+    except Exception:                                         # noqa: BLE001
+        pass
+    return (None, None)
+
+
 def create_lead(data: dict) -> dict:
     """สร้างลีด + จับคู่ + หักเครดิต — คืน {lead_id, delivered, price}"""
     cat = (data.get("category") or "").strip()
@@ -240,14 +276,17 @@ def create_lead(data: dict) -> dict:
         if (cur.fetchone() or [0])[0] >= LEAD_RATE_PER_HOUR:
             return {"error": "ส่งคำขอถี่เกินไป ลองใหม่ในอีก 1 ชั่วโมง"}
 
+        # พิกัดลีดจากทรัพย์ที่กดมา (ถ้ามี) — เก็บไว้ปักหมุด/เรียงรัศมีภายหลัง
+        lead_lat, lead_lng = _lead_coords(cur, data.get("source_code"), data.get("external_ref"))
         cur.execute(
             """insert into service_leads
                (category_code, province, district, source_code, external_ref,
-                customer_name, customer_phone, customer_line, detail, consent, ip_hash)
-               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s) returning id""",
+                customer_name, customer_phone, customer_line, detail, consent, ip_hash,
+                lat, lng)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s,%s) returning id""",
             (cat, province, district, data.get("source_code"), data.get("external_ref"),
              name, phone, (data.get("line") or "")[:60], (data.get("detail") or "")[:600],
-             data.get("ip_hash")),
+             data.get("ip_hash"), lead_lat, lead_lng),
         )
         lead_id = cur.fetchone()[0]
 
@@ -743,13 +782,14 @@ def install(app, conn, render, require_admin, secret_key: str):
                 cap = 5
             districts = [x.strip() for x in (d.get("districts") or "").split(",") if x.strip()]
             note = f"{(d.get('note') or '')[:400]} [ip:{ip}]"
+            plat, plng = _province_coords(province)   # ฐานที่ตั้งร้าน = ศูนย์กลางจังหวัด
             cur.execute(
                 """insert into service_providers
                    (name, contact_phone, line_id, categories, provinces, districts,
-                    daily_lead_cap, status, note)
-                   values (%s,%s,%s,%s,%s,%s,%s,'pending',%s) returning id""",
+                    daily_lead_cap, status, note, lat, lng)
+                   values (%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s) returning id""",
                 (name, phone, (d.get("line_id") or "").strip() or None, cats,
-                 [province], districts, cap, note))
+                 [province], districts, cap, note, plat, plng))
             pid = str(cur.fetchone()[0])
             c.commit()
 
@@ -871,14 +911,17 @@ def install(app, conn, render, require_admin, secret_key: str):
             return blocked
         d = await _form(request)
         split = lambda s: [x.strip() for x in (s or "").split(",") if x.strip()]
+        provs = split(d.get("provinces"))
+        plat, plng = _province_coords(provs[0] if provs else "")
         with conn() as c, c.cursor() as cur:
             cur.execute(
                 """insert into service_providers
-                   (name, contact_phone, categories, provinces, districts, line_user_id, status)
-                   values (%s,%s,%s,%s,%s,%s,'pending')""",
+                   (name, contact_phone, categories, provinces, districts, line_user_id,
+                    status, lat, lng)
+                   values (%s,%s,%s,%s,%s,%s,'pending',%s,%s)""",
                 (d.get("name"), _norm_phone(d.get("contact_phone")), split(d.get("categories")),
-                 split(d.get("provinces")), split(d.get("districts")),
-                 (d.get("line_user_id") or "").strip() or None))
+                 provs, split(d.get("districts")),
+                 (d.get("line_user_id") or "").strip() or None, plat, plng))
             c.commit()
         return RedirectResponse("/admin/providers", status_code=303)
 
