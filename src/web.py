@@ -2096,13 +2096,17 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     <div class="text-[11px] text-slate-400 mt-3 leading-relaxed">
       พื้นที่โปรโมททรัพย์ · จัดการรายการได้จากหลังบ้าน (เร็วๆ นี้)
     </div>
+    {% if is_home and svc_categories %}
+    <div class="mt-4">{% include "service_block.html" %}</div>
+    {% endif %}
   </div>
 </aside>
 {% endif %}
 </div>{# /xl grid #}
 
+{# ฟอร์มขอช่าง: จอกว้างโชว์ใน sidebar ข้างบน (ใต้โปรโมท) · จอเล็กที่ไม่มี sidebar โชว์เต็มความกว้างตรงนี้ #}
 {% if is_home and svc_categories %}
-<div class="mt-6">{% include "service_block.html" %}</div>
+<div class="mt-6 {% if promoted %}xl:hidden{% endif %}">{% include "service_block.html" %}</div>
 {% endif %}
 {% endblock %}
 {% block track %}<script>npaTrack('view_list',{province:{{ (province or '')|tojson }}});</script>{% endblock %}
