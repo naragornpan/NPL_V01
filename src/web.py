@@ -1522,7 +1522,6 @@ a.navlink[aria-current="page"]{color:var(--ink);font-weight:600;
       {% set tk = '?token=' ~ admin_token if admin_token else '' %}
       <a href="/{{ tk }}" class="navlink whitespace-nowrap">ทรัพย์</a>
       <a href="/map{{ tk }}" class="navlink whitespace-nowrap">แผนที่</a>
-      <a href="/compare" class="navlink whitespace-nowrap">เทียบราคา</a>
       <a href="/upcoming" class="navlink whitespace-nowrap">กำลังประมูล</a>
       <a href="/auction-results" class="navlink whitespace-nowrap">จบประมูล</a>
       <a href="/articles" class="navlink whitespace-nowrap">บทความ</a>
@@ -6070,7 +6069,6 @@ def sitemap(request: Request):
 
     urls = [(f"{base_u}/", None, "daily", "1.0"),
             (f"{base_u}/map", None, "weekly", "0.6"),
-            (f"{base_u}/compare", None, "weekly", "0.5"),
             (f"{base_u}/zone", None, "weekly", "0.7"),
             (f"{base_u}/articles", None, "weekly", "0.5"),
             (f"{base_u}/partner/apply", None, "monthly", "0.5"),
