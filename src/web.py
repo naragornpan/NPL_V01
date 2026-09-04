@@ -1701,6 +1701,7 @@ function fbSend(){
       <a href="/about" class="brandlink">เกี่ยวกับแปลงดี</a>
       <a href="/zone" class="brandlink">ทรัพย์ตามทำเล</a>
       <a href="/articles" class="brandlink">บทความ/คู่มือ</a>
+      <a href="/partner/apply" class="brandlink">รับงานบริการ (ช่าง/แม่บ้าน)</a>
       <a href="/contact" class="brandlink">ติดต่อเรา</a>
       <a href="/privacy" class="brandlink">นโยบายความเป็นส่วนตัว (PDPA)</a>
       <a href="/terms" class="brandlink">เงื่อนไขการใช้งาน</a>
@@ -6072,6 +6073,7 @@ def sitemap(request: Request):
             (f"{base_u}/compare", None, "weekly", "0.5"),
             (f"{base_u}/zone", None, "weekly", "0.7"),
             (f"{base_u}/articles", None, "weekly", "0.5"),
+            (f"{base_u}/partner/apply", None, "monthly", "0.5"),
             (f"{base_u}/about", None, "monthly", "0.3")]
 
     # บทความ (DB + hardcoded) — ให้ Google เก็บหน้าบทความที่ agent เขียนด้วย

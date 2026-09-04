@@ -389,6 +389,9 @@ SERVICE_BLOCK = """
   <p class="text-xs text-[var(--pencil)] mt-2">
     แปลงดีเป็นตัวกลางส่งต่อผู้ติดต่อเท่านั้น ไม่ใช่คู่สัญญา และไม่รับผิดชอบต่อคุณภาพงานหรือราคาที่ตกลงกันเอง
   </p>
+  <p class="text-xs mt-2">
+    <a href="/partner/apply" class="underline" style="color:var(--survey)">เป็นผู้ให้บริการ (ช่าง/แม่บ้าน)? รับงานกับเรา &rarr;</a>
+  </p>
 </section>
 """
 
