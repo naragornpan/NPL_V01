@@ -4787,6 +4787,13 @@ window.doRenovate=function(lid){
       <option value="">ทุกประเภท</option>
       {% for t in types %}<option value="{{ t.code }}" {% if t.code==ptype %}selected{% endif %}>{{ t.label }} ({{ t.n }})</option>{% endfor %}
     </select></label>
+  {% if status_opts %}
+  <label>สถานะนัดก่อน
+    <select name="status" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white max-w-[170px]" title="ผลของการประมูลนัดล่าสุดที่ผ่านมา">
+      <option value="">ทุกสถานะ</option>
+      {% for s in status_opts %}<option value="{{ s.key }}" {% if s.key==status %}selected{% endif %}>{{ s.label }} ({{ s.n }})</option>{% endfor %}
+    </select></label>
+  {% endif %}
   <label class="ml-auto">วันนัด
     <select name="date" onchange="this.form.submit()" class="mt-1 border rounded-lg px-2 py-1.5 bg-white max-w-[190px]">
       <option value="">ทุกวัน ({{ date_opts|length }} วัน)</option>
@@ -4831,6 +4838,16 @@ window.doRenovate=function(lid){
         <div class="text-xs text-slate-400 mt-0.5">
           <span class="text-slate-500 font-medium">นัด {{ r.next_round }}{% if r.total_rounds %}/{{ r.total_rounds }}{% endif %}</span>
           {% if r.province %} · {{ r.province }}{% endif %}{% if r.deed %} · โฉนด {{ r.deed }}{% endif %}</div>
+        {% if r.status and r.status.key != 'fresh' %}
+        <div class="mt-1">
+          <span class="text-[11px] px-2 py-0.5 rounded-full font-medium
+            {% if r.status.key=='no_sale' %}bg-slate-200 text-slate-700
+            {% elif r.status.key=='nobid' %}bg-amber-100 text-amber-800
+            {% elif r.status.key=='postpone' %}bg-sky-100 text-sky-800
+            {% else %}bg-slate-100 text-slate-600{% endif %}"
+            {% if r.status.raw %}title="ผลนัดล่าสุด: {{ r.status.raw }}"{% endif %}>{{ r.status.label }}{% if r.status.round %} · นัด {{ r.status.round }}{% endif %}{% if r.status.date_th %} · {{ r.status.date_th }}{% endif %}</span>
+        </div>
+        {% endif %}
         {% if r.title %}<div class="text-[11px] text-slate-400 line-clamp-1 mt-0.5">{{ r.title }}</div>{% endif %}
       </div>
       {% if r.grade %}<span class="seal g-{{ r.grade }}">{{ r.grade }}</span>{% endif %}
@@ -4854,7 +4871,7 @@ window.doRenovate=function(lid){
 
 {% if pages > 1 %}
 <nav class="mt-6 flex items-center justify-center gap-1 flex-wrap">
-  {% set qs %}{% if province %}&province={{ province }}{% endif %}{% if district %}&district={{ district }}{% endif %}{% if ptype %}&ptype={{ ptype }}{% endif %}{% if date %}&date={{ date }}{% endif %}{% if sel_round %}&round={{ sel_round }}{% endif %}{% if appr_up %}&appr_up=true{% endif %}{% endset %}
+  {% set qs %}{% if province %}&province={{ province }}{% endif %}{% if district %}&district={{ district }}{% endif %}{% if ptype %}&ptype={{ ptype }}{% endif %}{% if date %}&date={{ date }}{% endif %}{% if sel_round %}&round={{ sel_round }}{% endif %}{% if appr_up %}&appr_up=true{% endif %}{% if status %}&status={{ status }}{% endif %}{% endset %}
   {% if page > 1 %}<a href="/upcoming?page={{ page-1 }}{{ qs }}" class="px-3 py-1.5 rounded-lg border text-sm text-slate-600 hover:bg-slate-50">← ก่อนหน้า</a>{% endif %}
   <span class="px-3 py-1.5 text-sm text-slate-500">หน้า {{ page }}/{{ pages }}</span>
   {% if page < pages %}<a href="/upcoming?page={{ page+1 }}{{ qs }}" class="px-3 py-1.5 rounded-lg border text-sm text-slate-600 hover:bg-slate-50">ถัดไป →</a>{% endif %}
@@ -7357,11 +7374,37 @@ def auction_results(request: Request, result: str = Query(""),
         **ubase(request))
 
 
+def _led_status(res: str | None) -> tuple[str, str]:
+    """แปลงข้อความผลนัดล่าสุดของ LED เป็น (key, label) สำหรับ flag/ตัวกรอง
+    (ทรัพย์ที่ขายได้/ถอน ถูกตัดออกจากกำลังประมูลแล้ว จึงเหลือกลุ่มด้านล่าง)"""
+    r = (res or "").strip()
+    if not r:
+        return ("fresh", "ยังไม่เคยเปิดประมูล")
+    if "งดขาย" in r:
+        return ("no_sale", "งดขาย")
+    if "ไม่มีผู้สู้" in r or "ไม่มีผู้ซื้อ" in r or "ไม่มีผู้เข้า" in r or "ไม่มีผู้" in r:
+        return ("nobid", "ไม่มีผู้สู้ราคา")
+    if "เลื่อน" in r:
+        return ("postpone", "เลื่อนการขาย")
+    return ("other", "มีผลนัดก่อน")
+
+
+# ลำดับ + สีของ badge สถานะบนการ์ดกำลังประมูล
+_LED_STATUS_META = {
+    "no_sale":  ("งดขาย", "bg-slate-200 text-slate-700"),
+    "nobid":    ("ไม่มีผู้สู้ราคา", "bg-amber-100 text-amber-800"),
+    "postpone": ("เลื่อนการขาย", "bg-sky-100 text-sky-800"),
+    "other":    ("มีผลนัดก่อน", "bg-slate-100 text-slate-600"),
+    "fresh":    ("นัดแรก", "bg-emerald-50 text-emerald-700"),
+}
+_LED_STATUS_SEQ = ["no_sale", "nobid", "postpone", "other", "fresh"]
+
+
 @app.get("/upcoming", response_class=HTMLResponse)
 def upcoming_auctions(request: Request, province: str = Query(""), district: str = Query(""),
                       date: str = Query(""), ptype: str = Query(""),
                       sel_round: int = Query(0, alias="round"), page: int = Query(1, ge=1),
-                      appr_up: bool = Query(False)):
+                      appr_up: bool = Query(False), status: str = Query("")):
     """หน้า "กำลังจะประมูล" — ทรัพย์ LED ที่นัดถัดไปยังไม่ถึง (จาก biddate) จัดตามวันนัดถัดไป (ใกล้สุดก่อน)"""
     import datetime as _dt
     if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
@@ -7376,7 +7419,10 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
     date_opts: list = []
     round_opts: list = []
     types: list = []
+    status_opts: list = []
     appr_up_n = 0
+    if status not in _LED_STATUS_SEQ:
+        status = ""
     if not DEMO_MODE:
         try:
             from core.db import connect
@@ -7407,6 +7453,12 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                     "select distinct matched_ref ref from led_auction_results "
                     "where matched_ref is not null and (is_sold or result ilike '%ถอน%')"
                 ).fetchall()}
+                # ผลนัดล่าสุดที่ผ่านมาของแต่ละทรัพย์ (งดขาย/ไม่มีผู้สู้ราคา ฯลฯ) — ใช้ทำ flag+ตัวกรอง
+                last_res = {row["ref"]: {"result": row["result"], "date": row["sale_date"]}
+                            for row in conn.execute(
+                                "select distinct on (matched_ref) matched_ref ref, result, sale_date "
+                                "from led_auction_results where matched_ref is not null "
+                                "order by matched_ref, sale_date desc nulls last").fetchall()}
             bump = _appraisal_up()              # ref -> {delta,pct} ของทรัพย์ที่ราคาประเมินขึ้น
             items: list = []
             for r in raw:
@@ -7433,6 +7485,19 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                 _deed = (op.get("deedno") or "").strip()   # เลขโฉนดจากประกาศทรัพย์
                 it["deed"] = _deed if _deed and _deed not in ("-", "0") else None
                 it["appr_up"] = bump.get(r["ref"])         # {delta,pct} ถ้าราคาประเมินขึ้น
+                # สถานะผลนัดล่าสุดที่ผ่านมา (งดขาย/ไม่มีผู้สู้ราคา/นัดแรก ฯลฯ)
+                lr = last_res.get(r["ref"])
+                skey, slabel = _led_status(lr["result"] if lr else None)
+                _sround = None
+                if lr and lr["date"]:
+                    _bud = f"{lr['date'].year + 543}{lr['date'].month:02d}{lr['date'].day:02d}"
+                    _sround = next((i for i in range(1, 9)
+                                    if op.get(f"biddate{i}") == _bud), None)
+                it["status_key"] = skey
+                it["status"] = {"key": skey, "label": slabel,
+                                "round": _sround,
+                                "date_th": _thai_date(lr["date"]) if lr and lr["date"] else None,
+                                "raw": (lr["result"] or "").strip() if lr else None}
                 items.append(it)
             from collections import Counter
             dcnt = Counter(it["next_date"] for it in items)
@@ -7448,6 +7513,9 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
             types = [{"code": c, "label": TYPE_LABELS.get(c, c), "n": tcnt[c]}
                      for c in sorted(tcnt, key=lambda x: -tcnt[x])]
             appr_up_n = sum(1 for it in items if it.get("appr_up"))   # จำนวนที่ราคาประเมินขึ้น
+            scnt = Counter(it["status_key"] for it in items)         # นับตามสถานะผลนัดก่อน
+            status_opts = [{"key": k, "label": _LED_STATUS_META[k][0], "n": scnt[k]}
+                           for k in _LED_STATUS_SEQ if scnt.get(k)]
 
             def _keep(it):
                 if province and it["province"] != province:
@@ -7461,6 +7529,8 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                 if date and it["next_date"].isoformat() != date:
                     return False
                 if appr_up and not it.get("appr_up"):   # กรองเฉพาะที่ราคาประเมินขึ้น
+                    return False
+                if status and it["status_key"] != status:   # กรองตามสถานะผลนัดก่อน
                     return False
                 return True
 
@@ -7482,6 +7552,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
         district=district, districts=districts,
         date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
         ptype=ptype, types=types, appr_up=appr_up, appr_up_n=appr_up_n,
+        status=status, status_opts=status_opts,
         canonical=_abs_url(request, "/upcoming"),
         og_desc="ทรัพย์ขายทอดตลาดกรมบังคับคดีที่กำลังจะถึงวันประมูล — ราคาเริ่มต้น วันนัด และนับถอยหลัง",
         **ubase(request))
