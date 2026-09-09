@@ -5600,16 +5600,22 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
             r["led_case_no"] = auc_result["case_no"]
             r["led_case_court"] = auc_result.get("court")
         else:
-            _cdeed = (r.get("led_deed") or "").strip()
+            # ดึงเฉพาะ "เลขโฉนด" ตัวแรกจากข้อความ (ประกาศเก็บเป็น "1168 (ปัจจุบัน...)")
+            _m = re.match(r"\s*(\d+)", (r.get("led_deed") or ""))
+            _cdeed_num = _m.group(1) if _m else None
             _ccourt = (r.get("court_name") or "").strip()
-            if _cdeed and _cdeed not in ("", "-", "0") and _ccourt:
+            if _cdeed_num and _ccourt:
                 try:
                     from core.db import connect
                     with connect() as conn:
+                        # ผลเก็บ deed เป็นลิสต์คั่น , ได้ (เช่น "1168,1169") — จับเป็น token
+                        # จำกัดด้วยศาล กันเลขโฉนดซ้ำข้ามจังหวัด (เช่น 1168 ที่อยุธยา)
                         _cr = conn.execute(
                             "select case_no, court from led_auction_results "
-                            "where deed = %s and court = %s and case_no is not null "
-                            "order by sale_date desc limit 1", (_cdeed, _ccourt)).fetchone()
+                            "where court = %s and case_no is not null "
+                            "and deed ~ %s "
+                            "order by sale_date desc limit 1",
+                            (_ccourt, r"(^|[,\s])" + _cdeed_num + r"([,\s]|$)")).fetchone()
                     if _cr:
                         r["led_case_no"] = _cr["case_no"]
                         r["led_case_court"] = _cr["court"]
