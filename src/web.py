@@ -831,6 +831,10 @@ def enrich(r: dict, settings: dict | None = None, is_admin: bool = False) -> dic
     r["has_critical"] = any(f.get("severity") == "critical" for f in r.get("flags", []))
     r["grade_style"], r["grade_label"] = GRADE_STYLE.get(r.get("grade"),
                                                          GRADE_STYLE[None])
+    # flag "ราคาประเมินขึ้น" — เฉพาะทรัพย์ LED ที่กรมฯ ปรับราคาประเมินขึ้นหลังประกาศ
+    # ({'delta','pct'} หรือ None) · _appraisal_up() cache 10 นาที ไม่ยิง DB ทุกแถว
+    r["appr_up"] = (_appraisal_up().get(r.get("external_ref"))
+                    if r.get("source_code") == "led_auction" else None)
     return r
 
 
@@ -1937,6 +1941,7 @@ function fbSend(){
           {% elif r.special_discount_pct %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">ลดแรง {{ r.special_discount_pct }}%</span>{% endif %}
           {% if r.geo_precision=='parcel' %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">พิกัดจริง</span>{% endif %}
           {% if r.is_fresh %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">มาใหม่</span>{% endif %}
+          {% if r.appr_up %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">📈 ประเมินขึ้น{% if r.appr_up.pct %} +{{ r.appr_up.pct }}%{% endif %}</span>{% endif %}
         </div>
       </div>
     </a>
@@ -1993,6 +1998,7 @@ function fbSend(){
   <div class="p-3">
     <div class="text-xl font-semibold">{{ "{:,.0f}".format(r.opening_price or 0) }} <span class="text-sm font-normal text-slate-500">บาท</span></div>
     {% if r.price_per_sqwa %}<div class="text-xs text-slate-500">{{ "{:,.0f}".format(r.price_per_sqwa) }} บาท/ตร.ว.</div>{% endif %}
+    {% if r.appr_up %}<div class="mt-1 inline-block text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">📈 ประเมินขึ้น{% if r.appr_up.pct %} +{{ r.appr_up.pct }}%{% endif %}</div>{% endif %}
     <div class="mt-1.5 font-medium text-sm line-clamp-2">{{ r.title }}</div>
     <div class="mt-1 text-xs text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
       {% if r.land_area_sqwa %}<span>{{ r.land_area_sqwa }} ตร.ว.</span>{% endif %}
@@ -2103,6 +2109,7 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
             <span class="text-[11px] font-normal text-slate-500">บาท</span></div>
           <div class="text-xs text-slate-500 line-clamp-2 leading-snug mt-0.5">{{ r.title }}</div>
           {% if r.discount_pct %}<span class="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">ต่ำกว่าประเมิน {{ r.discount_pct }}%</span>{% endif %}
+          {% if r.appr_up %}<span class="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">📈 ประเมินขึ้น{% if r.appr_up.pct %} +{{ r.appr_up.pct }}%{% endif %}</span>{% endif %}
         </div>
       </a>
     {% endfor %}
@@ -2320,6 +2327,12 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
     {% if r.appraised_price %}
     <div class="mt-2 text-sm">ราคาประเมิน {{ "{:,.0f}".format(r.appraised_price) }} บาท
       {% if r.discount_pct %}<span class="text-emerald-700">· ต่ำกว่า {{ r.discount_pct }}%</span>{% endif %}
+    </div>
+    {% endif %}
+    {% if r.appr_up %}
+    <div class="mt-2 inline-flex items-center gap-1 text-sm px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-medium"
+         title="กรมบังคับคดีปรับราคาประเมินขึ้นหลังประกาศครั้งแรก">
+      📈 ราคาประเมินถูกปรับขึ้น{% if r.appr_up.pct %} +{{ r.appr_up.pct }}%{% endif %}{% if r.appr_up.delta %} (+{{ "{:,.0f}".format(r.appr_up.delta) }} บาท){% endif %}
     </div>
     {% endif %}
     <div class="mt-4 pt-4 border-t flex items-center gap-4" style="border-color:var(--rule)">
