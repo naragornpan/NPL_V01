@@ -4775,6 +4775,10 @@ window.doRenovate=function(lid){
       <option value="">ทุกอำเภอ</option>
       {% for d in districts %}<option value="{{ d }}" {% if d==district %}selected{% endif %}>{{ d }}</option>{% endfor %}
     </select></label>
+  <label class="flex items-center gap-1.5 cursor-pointer bg-white border rounded-lg px-2.5 py-1.5 mt-1 {% if appr_up %}ring-1 ring-emerald-400{% endif %}" style="border-color:var(--rule)" title="ทรัพย์ที่กรมฯ ปรับราคาประเมินขึ้นหลังประกาศ">
+    <input type="checkbox" name="appr_up" value="true" onchange="this.form.submit()" {% if appr_up %}checked{% endif %}>
+    <span>📈 ราคาประเมินขึ้น{% if appr_up_n %} <span class="text-slate-400">({{ appr_up_n }})</span>{% endif %}</span>
+  </label>
 </form>
 
 {% if not groups %}
@@ -4809,6 +4813,7 @@ window.doRenovate=function(lid){
         <div class="text-[11px] text-slate-400">ราคาเริ่มต้น นัด {{ r.next_round }}{% if is_admin and r.start_pct and r.start_pct < 100 %} <span class="text-emerald-600">({{ r.start_pct }}%)</span>{% endif %}</div>
         <div class="text-lg font-bold leading-tight" style="color:var(--survey-deep)">{{ "{:,.0f}".format(r.start_price or r.opening_price or 0) }}</div>
         {% if r.appraised_price %}<div class="text-[11px] text-slate-400">ประเมิน {{ "{:,.0f}".format(r.appraised_price) }}</div>{% endif %}
+        {% if r.appr_up %}<div class="text-[11px] text-emerald-600 font-medium">📈 ประเมินขึ้น{% if r.appr_up.pct %} +{{ r.appr_up.pct }}%{% endif %}</div>{% endif %}
       </div>
       <div class="text-right">
         <span class="text-[11px] px-2 py-0.5 rounded-full font-medium {% if r.days_left<=3 %}bg-rose-100 text-rose-700{% elif r.days_left<=7 %}bg-amber-100 text-amber-800{% else %}bg-emerald-50 text-emerald-700{% endif %}">
@@ -4822,7 +4827,7 @@ window.doRenovate=function(lid){
 
 {% if pages > 1 %}
 <nav class="mt-6 flex items-center justify-center gap-1 flex-wrap">
-  {% set qs %}{% if province %}&province={{ province }}{% endif %}{% if ptype %}&ptype={{ ptype }}{% endif %}{% if date %}&date={{ date }}{% endif %}{% if sel_round %}&round={{ sel_round }}{% endif %}{% endset %}
+  {% set qs %}{% if province %}&province={{ province }}{% endif %}{% if district %}&district={{ district }}{% endif %}{% if ptype %}&ptype={{ ptype }}{% endif %}{% if date %}&date={{ date }}{% endif %}{% if sel_round %}&round={{ sel_round }}{% endif %}{% if appr_up %}&appr_up=true{% endif %}{% endset %}
   {% if page > 1 %}<a href="/upcoming?page={{ page-1 }}{{ qs }}" class="px-3 py-1.5 rounded-lg border text-sm text-slate-600 hover:bg-slate-50">← ก่อนหน้า</a>{% endif %}
   <span class="px-3 py-1.5 text-sm text-slate-500">หน้า {{ page }}/{{ pages }}</span>
   {% if page < pages %}<a href="/upcoming?page={{ page+1 }}{{ qs }}" class="px-3 py-1.5 rounded-lg border text-sm text-slate-600 hover:bg-slate-50">ถัดไป →</a>{% endif %}
@@ -5882,6 +5887,38 @@ def _sold_withdrawn_refs() -> frozenset:
     except Exception as exc:                                         # noqa: BLE001
         log.warning("โหลด sold/withdrawn refs ล้มเหลว: %s", str(exc)[:120])
     return _SOLD_REFS_CACHE["s"]
+
+
+# ── ทรัพย์ LED ที่ 'ราคาประเมินขึ้น' (ล่าสุด > แรกสุด) — flag + ตัวกรอง ──
+_APPR_UP_CACHE: dict = {"t": 0.0, "d": {}}
+_APPR_UP_TTL = 600            # 10 นาที
+
+
+def _appraisal_up() -> dict:
+    """คืน dict: external_ref -> {'delta','pct'} ของทรัพย์ที่ราคาประเมินถูกปรับขึ้น
+
+    อ่านจาก view v_appraisal_bump (เทียบ snapshot แรกสุด vs ล่าสุด) · cache 10 นาที
+    """
+    import time as _t
+    if DEMO_MODE:
+        return {}
+    now = _t.time()
+    if _APPR_UP_CACHE["t"] and now - _APPR_UP_CACHE["t"] < _APPR_UP_TTL:
+        return _APPR_UP_CACHE["d"]
+    try:
+        from core.db import connect
+        with connect() as conn:
+            rows = conn.execute(
+                "select external_ref, appr_delta, appr_up_pct from v_appraisal_bump").fetchall()
+        _APPR_UP_CACHE["d"] = {
+            r["external_ref"]: {
+                "delta": float(r["appr_delta"]) if r["appr_delta"] is not None else None,
+                "pct": float(r["appr_up_pct"]) if r["appr_up_pct"] is not None else None}
+            for r in rows}
+        _APPR_UP_CACHE["t"] = now
+    except Exception as exc:                                         # noqa: BLE001
+        log.warning("โหลด appraisal-up ล้มเหลว (รัน migration 049?): %s", str(exc)[:120])
+    return _APPR_UP_CACHE["d"]
 
 
 def _parse_bbox(s: str):
@@ -7296,7 +7333,8 @@ def auction_results(request: Request, result: str = Query(""),
 @app.get("/upcoming", response_class=HTMLResponse)
 def upcoming_auctions(request: Request, province: str = Query(""), district: str = Query(""),
                       date: str = Query(""), ptype: str = Query(""),
-                      sel_round: int = Query(0, alias="round"), page: int = Query(1, ge=1)):
+                      sel_round: int = Query(0, alias="round"), page: int = Query(1, ge=1),
+                      appr_up: bool = Query(False)):
     """หน้า "กำลังจะประมูล" — ทรัพย์ LED ที่นัดถัดไปยังไม่ถึง (จาก biddate) จัดตามวันนัดถัดไป (ใกล้สุดก่อน)"""
     import datetime as _dt
     if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
@@ -7311,6 +7349,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
     date_opts: list = []
     round_opts: list = []
     types: list = []
+    appr_up_n = 0
     if not DEMO_MODE:
         try:
             from core.db import connect
@@ -7341,6 +7380,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                     "select distinct matched_ref ref from led_auction_results "
                     "where matched_ref is not null and (is_sold or result ilike '%ถอน%')"
                 ).fetchall()}
+            bump = _appraisal_up()              # ref -> {delta,pct} ของทรัพย์ที่ราคาประเมินขึ้น
             items: list = []
             for r in raw:
                 if r["ref"] in done:            # ขาย/ถอนแล้ว ไม่ต้องโชว์ในกำลังประมูล
@@ -7365,6 +7405,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                 it["start_price"] = led_reserve_price(r["appraised_price"], ni)
                 _deed = (op.get("deedno") or "").strip()   # เลขโฉนดจากประกาศทรัพย์
                 it["deed"] = _deed if _deed and _deed not in ("-", "0") else None
+                it["appr_up"] = bump.get(r["ref"])         # {delta,pct} ถ้าราคาประเมินขึ้น
                 items.append(it)
             from collections import Counter
             dcnt = Counter(it["next_date"] for it in items)
@@ -7379,6 +7420,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
             tcnt = Counter(it["property_type"] for it in items if it["property_type"])
             types = [{"code": c, "label": TYPE_LABELS.get(c, c), "n": tcnt[c]}
                      for c in sorted(tcnt, key=lambda x: -tcnt[x])]
+            appr_up_n = sum(1 for it in items if it.get("appr_up"))   # จำนวนที่ราคาประเมินขึ้น
 
             def _keep(it):
                 if province and it["province"] != province:
@@ -7390,6 +7432,8 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                 if sel_round and it["next_round"] != sel_round:
                     return False
                 if date and it["next_date"].isoformat() != date:
+                    return False
+                if appr_up and not it.get("appr_up"):   # กรองเฉพาะที่ราคาประเมินขึ้น
                     return False
                 return True
 
@@ -7410,7 +7454,7 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
         page=page, pages=pages, province=province, provinces=provinces,
         district=district, districts=districts,
         date=date, date_opts=date_opts, sel_round=sel_round, round_opts=round_opts,
-        ptype=ptype, types=types,
+        ptype=ptype, types=types, appr_up=appr_up, appr_up_n=appr_up_n,
         canonical=_abs_url(request, "/upcoming"),
         og_desc="ทรัพย์ขายทอดตลาดกรมบังคับคดีที่กำลังจะถึงวันประมูล — ราคาเริ่มต้น วันนัด และนับถอยหลัง",
         **ubase(request))
