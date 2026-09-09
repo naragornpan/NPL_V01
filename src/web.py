@@ -2200,6 +2200,16 @@ document.addEventListener('DOMContentLoaded', syncDistricts);
       <div><dt class="text-slate-500 text-xs">{{ k }}</dt><dd class="font-medium">{{ v }}</dd></div>
       {% endfor %}
     </dl>
+    {% if r.led_case_no %}
+    <div class="mt-4 rounded-xl border px-3 py-2.5 flex items-start gap-2.5" style="border-color:var(--rule);background:#F8FAFC">
+      <span class="text-lg leading-none mt-0.5">⚖️</span>
+      <div class="min-w-0">
+        <div class="text-xs text-slate-500">เลขคดีแดง (ไว้ค้นสำนวน/ผลที่กรมฯ)</div>
+        <div class="font-semibold text-base tracking-wide select-all">{{ r.led_case_no }}{% if r.led_case_court %} <span class="text-sm font-normal text-slate-500">· ศาล{{ r.led_case_court }}</span>{% endif %}</div>
+        <a href="https://asset.led.go.th/report/reports.asp" target="_blank" rel="noopener" class="text-[11px] brandlink mt-0.5 inline-block">ค้นด้วยเลขคดีนี้ที่กรมบังคับคดี ↗</a>
+      </div>
+    </div>
+    {% endif %}
     {% if r.led_pid and r.led_bdate %}
     <form method="post" action="https://asset.led.go.th/newbidreg/asset_search_day.asp" target="_blank" rel="noopener" class="mt-4">
       <input type="hidden" name="province_id" value="{{ r.led_pid }}">
@@ -5579,6 +5589,32 @@ def detail(request: Request, source_code: str, ref: str, token: str = Query(""))
                         auc_result["pct"] = round((_ratio - 1) * 100)
         except Exception as exc:                                    # noqa: BLE001
             log.warning("ดึงผลประมูลไม่สำเร็จ: %s", str(exc)[:100])
+    # เลขคดีแดง — ให้ผู้ใช้เอาไปค้นสำนวน/ผลที่กรมบังคับคดีเองได้
+    # ประกาศทรัพย์ LED ไม่เก็บเลขคดี (ตัดออกด้วย PII) — เลขคดีอยู่เฉพาะในผล report.asp
+    #   1) ถ้าจับคู่ result ด้วย matched_ref ได้ ใช้ case_no ตรง ๆ
+    #   2) ถ้าไม่ได้ (ผลส่วนใหญ่ยัง matched_ref ไม่ติด) fallback จับด้วย โฉนด+ศาล (ไม่ชนกัน)
+    r["led_case_no"] = None
+    r["led_case_court"] = None
+    if source_code == "led_auction" and not DEMO_MODE:
+        if auc_result and auc_result.get("case_no"):
+            r["led_case_no"] = auc_result["case_no"]
+            r["led_case_court"] = auc_result.get("court")
+        else:
+            _cdeed = (r.get("led_deed") or "").strip()
+            _ccourt = (r.get("court_name") or "").strip()
+            if _cdeed and _cdeed not in ("", "-", "0") and _ccourt:
+                try:
+                    from core.db import connect
+                    with connect() as conn:
+                        _cr = conn.execute(
+                            "select case_no, court from led_auction_results "
+                            "where deed = %s and court = %s and case_no is not null "
+                            "order by sale_date desc limit 1", (_cdeed, _ccourt)).fetchone()
+                    if _cr:
+                        r["led_case_no"] = _cr["case_no"]
+                        r["led_case_court"] = _cr["court"]
+                except Exception as exc:                            # noqa: BLE001
+                    log.warning("ค้นเลขคดีแดงไม่สำเร็จ: %s", str(exc)[:100])
     _op = r.get("opening_price")
     _usm = r.get("usable_area_sqm")
     _pps_m = round(_op / _usm) if _op and _usm else None          # ราคา/ตร.ม. (คอนโด/ห้องชุด)
