@@ -86,6 +86,20 @@ log = logging.getLogger("web")
 app = FastAPI(title="แปลงดี — NPA Deal Finder")
 
 
+@app.middleware("http")
+async def _static_cache_headers(request: "Request", call_next):
+    """ใส่ cache ยาวให้ไฟล์ static (tailwind 398KB, echarts 1MB, โลโก้)
+
+    ไฟล์พวกนี้แทบไม่เปลี่ยน + โหลดทุกหน้า → บอต/ผู้ใช้ดึงซ้ำ = เปลือง bandwidth
+    ตั้ง max-age ยาวให้ Cloudflare/เบราว์เซอร์ cache ไว้ Render ไม่ต้องส่งซ้ำ (ลด egress มาก)
+    หมายเหตุ: ถ้าอัปเดตไฟล์ static ควรเปลี่ยนชื่อ (cache-bust) ไม่งั้นของเก่าค้าง ~30 วัน
+    """
+    resp = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "public, max-age=2592000"   # 30 วัน
+    return resp
+
+
 # ---------------------------------------------------------------------
 # Auth หลังบ้าน — cookie เซ็นด้วย HMAC (ไม่พึ่ง lib เพิ่ม)
 # แทน token ใน URL (ซึ่งรั่วผ่าน log/referrer/ประวัติ)
