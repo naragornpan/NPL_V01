@@ -62,6 +62,14 @@ def _num(s):
         return None
 
 
+def _deed_tokens(s) -> set:
+    """ดึงชุดเลขโฉนดจากข้อความ (result เก็บได้แบบ '1168,1169' · ประกาศเก็บ
+    '1801 (ปัจจุบันเป็นโฉนดเลขที่ 27095)') — คืนเซ็ตเลขทั้งหมด (>=2 หลัก กันเลขเดี่ยว/noise)"""
+    if not s:
+        return set()
+    return {t for t in re.findall(r"\d{2,}", str(s))}
+
+
 def _bud_to_date(yyyymmdd: str):
     """'25690807' (พ.ศ.) -> date(2026,8,7)"""
     try:
@@ -149,10 +157,23 @@ def _fetch_report(opener, office_id: str, d: dt.date):
     return out
 
 
+_AMBIG = object()   # marker: คีย์นี้ชนกัน (>1 ทรัพย์ในสำนักงาน+วันเดียวกัน) — ไม่จับคู่
+
+
+def _idx_put(bucket: dict, key, ref):
+    """ใส่ key->ref ลง bucket · ถ้าชนกับ ref อื่น = ambiguous (ไม่จับคู่ กัน false match)"""
+    if key in bucket:
+        if bucket[key] is not _AMBIG and bucket[key] != ref:
+            bucket[key] = _AMBIG
+    else:
+        bucket[key] = ref
+
+
 def _targets_and_index(conn, days_back: int):
     """คืน (targets, match_index)
        targets = set{(office_id, date)} วันนัดที่เลยแล้วและอยู่ในกรอบ
-       match_index = {(office_id, date): {appraised_int: external_ref}}
+       match_index = {(office_id, date): {"appr": {int: ref}, "deed": {token: ref}}}
+       ค่าที่ชนกัน (หลายทรัพย์คีย์เดียวกันในสำนักงาน+วันเดียว) = _AMBIG (ข้าม กัน false match)
     """
     today = dt.date.today()
     lo = today - dt.timedelta(days=days_back)
@@ -160,6 +181,8 @@ def _targets_and_index(conn, days_back: int):
         select external_ref,
                raw_fields->'_open_post'->>'province_id' as office_id,
                raw_fields->>'appraised_price'           as appr,
+               coalesce(raw_fields->>'deed_no',
+                        raw_fields->'_open_post'->>'deedno') as deed,
                raw_fields->'_open_post'->>'biddate1' b1,
                raw_fields->'_open_post'->>'biddate2' b2,
                raw_fields->'_open_post'->>'biddate3' b3,
@@ -184,6 +207,7 @@ def _targets_and_index(conn, days_back: int):
                 appr_i = int(float(r["appr"]))
             except ValueError:
                 appr_i = None
+        deeds = _deed_tokens(r["deed"])
         for k in ("b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8"):
             bd = r[k]
             if not bd or not bd.isdigit() or len(bd) != 8:
@@ -192,9 +216,74 @@ def _targets_and_index(conn, days_back: int):
             if not d or d >= today or d < lo:
                 continue                                       # เอาเฉพาะที่เลยวันแล้ว+ในกรอบ
             targets.add((office, d))
+            slot = index.setdefault((office, d), {"appr": {}, "deed": {}})
             if appr_i is not None:
-                index.setdefault((office, d), {}).setdefault(appr_i, r["external_ref"])
+                _idx_put(slot["appr"], appr_i, r["external_ref"])
+            for tok in deeds:
+                _idx_put(slot["deed"], tok, r["external_ref"])
     return targets, index
+
+
+def _match_ref(slot: dict, row: dict, appr_i):
+    """หา external_ref ของทรัพย์เราที่ตรงกับผลแถวนี้ ในสำนักงาน+วันเดียวกัน
+    ลำดับความมั่นใจ: โฉนด (เฉพาะเจาะจงสุด) ก่อน แล้วค่อยราคาประเมิน · ข้ามคีย์ที่ชนกัน"""
+    if not slot:
+        return None
+    di = slot.get("deed") or {}
+    for tok in _deed_tokens(row.get("deed")):
+        ref = di.get(tok)
+        if ref is not None and ref is not _AMBIG:
+            return ref
+    if appr_i is not None:
+        ref = (slot.get("appr") or {}).get(appr_i)
+        if ref is not None and ref is not _AMBIG:
+            return ref
+    return None
+
+
+def rematch(conn, days_back: int) -> int:
+    """จับคู่ผลที่ 'มีอยู่แล้ว' ในฐาน (matched_ref ว่าง) กับทรัพย์เราใหม่ ด้วยสัญญาณ
+    โฉนด+ราคาประเมิน — ไม่ต้องยิง report.asp จึงรันได้ทุกที่ที่ต่อ DB (ไม่ต้อง IP ไทย)
+    ปลอดภัย: จับเฉพาะสำนักงาน+วันเดียวกัน และคีย์ที่ไม่ชนกัน (กัน false match)"""
+    today = dt.date.today()
+    lo = today - dt.timedelta(days=days_back)
+    _, index = _targets_and_index(conn, days_back)
+    rows = conn.execute(
+        "select office_id, sale_date, row_key, deed, appraised_price "
+        "from led_auction_results "
+        "where matched_ref is null and sale_date >= %s and sale_date < %s",
+        (lo, today)).fetchall()
+    log.info("rematch: ผลที่ยังไม่จับคู่ในกรอบ %d แถว", len(rows))
+    updates = []
+    for r in rows:
+        slot = index.get((r["office_id"], r["sale_date"]))
+        if not slot:
+            continue
+        appr_i = int(r["appraised_price"]) if r["appraised_price"] else None
+        ref = _match_ref(slot, {"deed": r["deed"]}, appr_i)
+        if ref:
+            updates.append((ref, r["office_id"], r["sale_date"], r["row_key"]))
+    # อัปเดตแบบ bulk ทีละก้อน (UPDATE ... FROM VALUES) — เร็วกว่ายิงทีละแถวมาก
+    CHUNK = 500
+    done = 0
+    for i in range(0, len(updates), CHUNK):
+        chunk = updates[i:i + CHUNK]
+        ph = ",".join(["(%s,%s,%s,%s)"] * len(chunk))
+        params: list = []
+        for ref, office, d, rk in chunk:
+            params += [ref, office, d, rk]
+        conn.execute(
+            "update led_auction_results t set matched_ref = v.ref::text "
+            f"from (values {ph}) as v(ref, office, sale_date, row_key) "
+            "where t.office_id = v.office::text and t.sale_date = v.sale_date::date "
+            "and t.row_key = v.row_key::text and t.matched_ref is null",
+            params)
+        conn.commit()
+        done += len(chunk)
+        log.info("  ...อัปเดต %d/%d", done, len(updates))
+    log.info("rematch เสร็จ: จับคู่เพิ่มได้ %d แถว (จากที่ยังไม่จับคู่ %d)",
+             len(updates), len(rows))
+    return len(updates)
 
 
 def main() -> int:
@@ -204,7 +293,14 @@ def main() -> int:
     ap.add_argument("--sleep", type=float, default=1.2, help="พักระหว่างคำขอ (วินาที)")
     ap.add_argument("--refetch", action="store_true", help="ดึงซ้ำแม้เคยดึงแล้ว")
     ap.add_argument("--limit", type=int, default=0, help="จำกัดจำนวน (office,วัน) ต่อรอบ (0=ไม่จำกัด)")
+    ap.add_argument("--rematch", action="store_true",
+                    help="จับคู่ผลที่มีอยู่แล้วในฐานกับทรัพย์ใหม่ (ไม่ยิง report.asp, ต่อ DB อย่างเดียว)")
     args = ap.parse_args()
+
+    if args.rematch:
+        with connect() as conn:
+            rematch(conn, args.days_back)
+        return 0
 
     opener = urllib.request.build_opener(
         urllib.request.HTTPSHandler(context=_CTX))
@@ -245,10 +341,10 @@ def main() -> int:
                 time.sleep(args.sleep)
                 continue
             n_pages += 1
-            idx = index.get((office, d), {})
+            slot = index.get((office, d), {})
             for row in rows:
                 appr_i = int(row["appraised_price"]) if row["appraised_price"] else None
-                ref = idx.get(appr_i) if appr_i is not None else None
+                ref = _match_ref(slot, row, appr_i)            # โฉนดก่อน แล้วราคาประเมิน
                 if ref:
                     n_matched += 1
                 row_key = f"{(row['case_no'] or '')}|{appr_i if appr_i is not None else ''}"
