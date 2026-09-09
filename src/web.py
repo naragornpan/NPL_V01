@@ -7490,9 +7490,9 @@ def upcoming_auctions(request: Request, province: str = Query(""), district: str
                 skey, slabel = _led_status(lr["result"] if lr else None)
                 _sround = None
                 if lr and lr["date"]:
-                    _bud = f"{lr['date'].year + 543}{lr['date'].month:02d}{lr['date'].day:02d}"
+                    _bud_str = f"{lr['date'].year + 543}{lr['date'].month:02d}{lr['date'].day:02d}"
                     _sround = next((i for i in range(1, 9)
-                                    if op.get(f"biddate{i}") == _bud), None)
+                                    if op.get(f"biddate{i}") == _bud_str), None)
                 it["status_key"] = skey
                 it["status"] = {"key": skey, "label": slabel,
                                 "round": _sround,
