@@ -32,6 +32,8 @@ import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 
+import psycopg   # สำหรับจับ OperationalError ตอน connection หลุด (รันยาวหลายชม.)
+
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -286,6 +288,43 @@ def rematch(conn, days_back: int) -> int:
     return len(updates)
 
 
+def _write_office(conn, office, d, rows, slot) -> tuple:
+    """เขียนผลของ (office, วัน) ลง DB + fetchlog แล้ว commit · คืน (n_rows, n_matched)
+    ถ้า conn หลุดกลางคัน จะโยน OperationalError ให้ผู้เรียกไป reconnect + retry (upsert เขียนซ้ำได้)"""
+    n_rows = n_matched = 0
+    for row in rows:
+        appr_i = int(row["appraised_price"]) if row["appraised_price"] else None
+        ref = _match_ref(slot, row, appr_i)                    # โฉนดก่อน แล้วราคาประเมิน
+        if ref:
+            n_matched += 1
+        row_key = f"{(row['case_no'] or '')}|{appr_i if appr_i is not None else ''}"
+        conn.execute("""
+            insert into led_auction_results
+              (office_id, sale_date, row_key, case_no, seq, court, deed, plaintiff,
+               property_type_th, appraised_price, result, sold_price, is_sold, matched_ref, fetched_at)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            on conflict (office_id, sale_date, row_key) do update set
+               case_no=excluded.case_no, seq=excluded.seq, court=excluded.court,
+               deed=excluded.deed, plaintiff=excluded.plaintiff,
+               property_type_th=excluded.property_type_th,
+               appraised_price=excluded.appraised_price, result=excluded.result,
+               sold_price=excluded.sold_price, is_sold=excluded.is_sold,
+               matched_ref=coalesce(excluded.matched_ref, led_auction_results.matched_ref),
+               fetched_at=now()
+        """, (office, d, row_key, row["case_no"], row["seq"], row["court"],
+              row["deed"], row["plaintiff"], row["property_type_th"],
+              row["appraised_price"], row["result"], row["sold_price"],
+              row["is_sold"], ref))
+        n_rows += 1
+    conn.execute("""insert into led_result_fetchlog (office_id, sale_date, rows_found, fetched_at)
+                    values (%s,%s,%s, now())
+                    on conflict (office_id, sale_date)
+                    do update set rows_found=excluded.rows_found, fetched_at=now()""",
+                 (office, d, len(rows)))
+    conn.commit()
+    return n_rows, n_matched
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days-back", type=int, default=185,
@@ -320,7 +359,8 @@ def main() -> int:
         return 0   # ไม่ทำให้ job แดง
 
     today = dt.date.today()
-    with connect() as conn:
+    conn = connect()
+    try:
         targets, index = _targets_and_index(conn, args.days_back)
         done = {(r["office_id"], r["sale_date"]) for r in conn.execute(
             "select office_id, sale_date from led_result_fetchlog").fetchall()}
@@ -342,41 +382,33 @@ def main() -> int:
                 continue
             n_pages += 1
             slot = index.get((office, d), {})
-            for row in rows:
-                appr_i = int(row["appraised_price"]) if row["appraised_price"] else None
-                ref = _match_ref(slot, row, appr_i)            # โฉนดก่อน แล้วราคาประเมิน
-                if ref:
-                    n_matched += 1
-                row_key = f"{(row['case_no'] or '')}|{appr_i if appr_i is not None else ''}"
-                conn.execute("""
-                    insert into led_auction_results
-                      (office_id, sale_date, row_key, case_no, seq, court, deed, plaintiff,
-                       property_type_th, appraised_price, result, sold_price, is_sold, matched_ref, fetched_at)
-                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
-                    on conflict (office_id, sale_date, row_key) do update set
-                       case_no=excluded.case_no, seq=excluded.seq, court=excluded.court,
-                       deed=excluded.deed, plaintiff=excluded.plaintiff,
-                       property_type_th=excluded.property_type_th,
-                       appraised_price=excluded.appraised_price, result=excluded.result,
-                       sold_price=excluded.sold_price, is_sold=excluded.is_sold,
-                       matched_ref=coalesce(excluded.matched_ref, led_auction_results.matched_ref),
-                       fetched_at=now()
-                """, (office, d, row_key, row["case_no"], row["seq"], row["court"],
-                      row["deed"], row["plaintiff"], row["property_type_th"],
-                      row["appraised_price"], row["result"], row["sold_price"],
-                      row["is_sold"], ref))
-                n_rows += 1
-            conn.execute("""insert into led_result_fetchlog (office_id, sale_date, rows_found, fetched_at)
-                            values (%s,%s,%s, now())
-                            on conflict (office_id, sale_date)
-                            do update set rows_found=excluded.rows_found, fetched_at=now()""",
-                         (office, d, len(rows)))
-            conn.commit()
+            # เขียนผลของ office นี้ · ถ้า DB หลุด (รันยาวหลายชม. Supabase ตัด conn)
+            # เชื่อมต่อใหม่แล้วลองใหม่ ไม่ให้ทั้ง job ล้ม (upsert idempotent เขียนซ้ำได้)
+            for attempt in range(4):
+                try:
+                    nr, nm = _write_office(conn, office, d, rows, slot)
+                    n_rows += nr
+                    n_matched += nm
+                    break
+                except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+                    log.warning("DB หลุดที่ office %s %s (%s) — เชื่อมต่อใหม่ (ครั้งที่ %d)",
+                                office, d, str(exc)[:60], attempt + 1)
+                    try:
+                        conn.close()
+                    except Exception:                          # noqa: BLE001
+                        pass
+                    time.sleep(min(5 * (attempt + 1), 30))
+                    conn = connect()
             if i % 20 == 0:
                 log.info("  ...%d/%d (rows=%d matched=%d)", i, len(todo), n_rows, n_matched)
             time.sleep(args.sleep)
 
         log.info("เสร็จ: ดึง %d หน้า | เก็บผล %d แถว | จับคู่ทรัพย์เราได้ %d", n_pages, n_rows, n_matched)
+    finally:
+        try:
+            conn.close()
+        except Exception:                                      # noqa: BLE001
+            pass
     return 0
 
 
